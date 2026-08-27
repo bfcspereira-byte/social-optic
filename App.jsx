@@ -59,41 +59,49 @@ const CATEGORY_PROMPTS = {
 // por todos os componentes enquanto o artifact estiver aberto. Isto reinicia
 // se a página for recarregada; a versão real (Netlify) deve usar uma base
 // de dados própria.
-// Fora do Claude (site real no Netlify), o navegador tem localStorage
-// disponível sem restrições — por isso contas e posts ficam guardados
-// mesmo depois de fechar e reabrir a página.
-function loadMap(key) {
-  try {
-    const raw = localStorage.getItem(key);
-    return raw ? new Map(JSON.parse(raw)) : new Map();
-  } catch {
-    return new Map();
-  }
+// Contas e posts já não vivem no dispositivo — são guardados no servidor
+// (Netlify Functions + Netlify Blobs), por isso toda a equipa partilha a
+// mesma biblioteca, em qualquer telemóvel ou computador.
+async function apiLogin(email, password) {
+  const res = await fetch("/.netlify/functions/accounts", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ action: "login", email, password }),
+  });
+  return res.json();
 }
-function saveMap(key, map) {
-  try {
-    localStorage.setItem(key, JSON.stringify(Array.from(map.entries())));
-  } catch {
-    // Se o navegador bloquear localStorage (ex: modo privado), a app
-    // continua a funcionar só dentro da sessão atual.
-  }
+async function apiSignup(name, email, password) {
+  const res = await fetch("/.netlify/functions/accounts", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ action: "signup", name, email, password }),
+  });
+  return res.json();
 }
-
-const sessionAccounts = {
-  _map: loadMap("optic_accounts"),
-  get(key) { return this._map.get(key); },
-  set(key, value) { this._map.set(key, value); saveMap("optic_accounts", this._map); },
-};
-const sessionPosts = {
-  _map: loadMap("optic_posts"),
-  get(key) { return this._map.get(key); },
-  set(key, value) { this._map.set(key, value); saveMap("optic_posts", this._map); },
-  delete(key) { this._map.delete(key); saveMap("optic_posts", this._map); },
-  values() { return this._map.values(); },
-};
-let sessionListeners = [];
-function notifyPostsChanged() {
-  sessionListeners.forEach((fn) => fn());
+async function apiListPosts() {
+  const res = await fetch("/.netlify/functions/posts");
+  const data = await res.json();
+  return data.ok ? data.posts : [];
+}
+async function apiSavePost(post) {
+  const res = await fetch("/.netlify/functions/posts", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(post),
+  });
+  return res.json();
+}
+async function apiUpdatePostStatus(id, status) {
+  const res = await fetch("/.netlify/functions/posts", {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ id, status }),
+  });
+  return res.json();
+}
+async function apiDeletePost(id) {
+  const res = await fetch("/.netlify/functions/posts?id=" + encodeURIComponent(id), { method: "DELETE" });
+  return res.json();
 }
 
 function useStorageStatus() {
@@ -197,32 +205,20 @@ function LoginScreen({ onLogin }) {
       return;
     }
     setLoading(true);
-    await new Promise((r) => setTimeout(r, 300));
 
-    const key = email.toLowerCase();
-    const existing = sessionAccounts.get(key);
+    try {
+      const result = mode === "entrar"
+        ? await apiLogin(email, password)
+        : await apiSignup(name, email, password);
 
-    if (mode === "entrar") {
-      if (!existing) {
-        setError("Não encontrámos essa conta nesta sessão. Cria uma nova, é rápido.");
+      if (!result.ok) {
+        setError(result.error || "Algo correu mal. Tenta novamente.");
         setLoading(false);
         return;
       }
-      if (existing.password !== password) {
-        setError("Palavra-passe incorreta.");
-        setLoading(false);
-        return;
-      }
-      onLogin(existing);
-    } else {
-      if (existing) {
-        setError("Já existe uma conta com este email nesta sessão.");
-        setLoading(false);
-        return;
-      }
-      const user = { name, email: key, password };
-      sessionAccounts.set(key, user);
-      onLogin(user);
+      onLogin(result.user);
+    } catch (err) {
+      setError("Não foi possível ligar ao servidor. Tenta novamente.");
     }
     setLoading(false);
   }
@@ -372,7 +368,7 @@ function LoginScreen({ onLogin }) {
         </div>
 
         <p className="text-center text-xs mt-5" style={{ color: "#8C7A6E" }}>
-          Cada pessoa da equipa entra com a sua própria conta neste dispositivo
+          Conta e biblioteca partilhadas por toda a equipa
         </p>
       </div>
     </div>
@@ -431,9 +427,8 @@ Responde APENAS com um objeto JSON, sem markdown, sem texto antes ou depois, no 
 
   async function saveToLibrary(status) {
     if (!result) return;
-    const id = "post_" + Date.now();
     const post = {
-      id,
+      id: "post_" + Date.now(),
       category,
       status, // "rascunho" | "pronto"
       author: user.name,
@@ -442,8 +437,12 @@ Responde APENAS com um objeto JSON, sem markdown, sem texto antes ou depois, no 
       mediaNames: media.map((m) => m.name),
       ...result,
     };
-    sessionPosts.set(id, post);
-    notifyPostsChanged();
+    try {
+      await apiSavePost(post);
+    } catch (err) {
+      setError("Não consegui guardar na biblioteca partilhada. Tenta novamente.");
+      return;
+    }
     onSaved(post);
     setResult(null);
     setCategory(null);
@@ -664,32 +663,31 @@ Responde APENAS com um objeto JSON, sem markdown, sem texto antes ou depois, no 
 function Library({ refreshKey }) {
   const [posts, setPosts] = useState([]);
   const [filter, setFilter] = useState("todos");
+  const [loading, setLoading] = useState(true);
   const [copiedId, setCopiedId] = useState(null);
 
   useEffect(() => {
     load();
-    const listener = () => load();
-    sessionListeners.push(listener);
-    return () => {
-      sessionListeners = sessionListeners.filter((l) => l !== listener);
-    };
   }, [refreshKey]);
 
-  function load() {
-    const valid = Array.from(sessionPosts.values()).sort((a, b) =>
-      a.createdAt < b.createdAt ? 1 : -1
-    );
-    setPosts(valid);
+  async function load() {
+    setLoading(true);
+    try {
+      setPosts(await apiListPosts());
+    } catch {
+      setPosts([]);
+    }
+    setLoading(false);
   }
 
-  function markPublished(post) {
-    sessionPosts.set(post.id, { ...post, status: "publicado" });
-    notifyPostsChanged();
+  async function markPublished(post) {
+    await apiUpdatePostStatus(post.id, "publicado");
+    load();
   }
 
-  function remove(post) {
-    sessionPosts.delete(post.id);
-    notifyPostsChanged();
+  async function remove(post) {
+    await apiDeletePost(post.id);
+    load();
   }
 
   function copyCaption(post) {
@@ -727,7 +725,13 @@ function Library({ refreshKey }) {
         </div>
       </div>
 
-      {filtered.length === 0 && (
+      {loading && (
+        <div className="flex items-center gap-2 text-sm" style={{ color: "#B0A196" }}>
+          <Loader2 size={14} className="animate-spin" /> A carregar biblioteca partilhada...
+        </div>
+      )}
+
+      {!loading && filtered.length === 0 && (
         <div className="text-center py-16 rounded-xl" style={{ background: "#fff", border: "1px dashed #E6D6C7" }}>
           <Eye size={22} color="#E6D6C7" className="mx-auto mb-3" />
           <p style={{ color: "#B0A196" }} className="text-sm">Ainda não há conteúdo aqui.</p>
@@ -785,11 +789,7 @@ function Dashboard({ user, onCreate, onOpenCategory, refreshKey, onOpenLibrary }
   const [posts, setPosts] = useState([]);
 
   useEffect(() => {
-    const load = () =>
-      setPosts(Array.from(sessionPosts.values()).sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1)));
-    load();
-    sessionListeners.push(load);
-    return () => { sessionListeners = sessionListeners.filter((l) => l !== load); };
+    apiListPosts().then(setPosts).catch(() => setPosts([]));
   }, [refreshKey]);
 
   const publicados = posts.filter((p) => p.status === "publicado").length;
