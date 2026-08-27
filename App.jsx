@@ -59,8 +59,38 @@ const CATEGORY_PROMPTS = {
 // por todos os componentes enquanto o artifact estiver aberto. Isto reinicia
 // se a página for recarregada; a versão real (Netlify) deve usar uma base
 // de dados própria.
-const sessionAccounts = new Map();
-const sessionPosts = new Map();
+// Fora do Claude (site real no Netlify), o navegador tem localStorage
+// disponível sem restrições — por isso contas e posts ficam guardados
+// mesmo depois de fechar e reabrir a página.
+function loadMap(key) {
+  try {
+    const raw = localStorage.getItem(key);
+    return raw ? new Map(JSON.parse(raw)) : new Map();
+  } catch {
+    return new Map();
+  }
+}
+function saveMap(key, map) {
+  try {
+    localStorage.setItem(key, JSON.stringify(Array.from(map.entries())));
+  } catch {
+    // Se o navegador bloquear localStorage (ex: modo privado), a app
+    // continua a funcionar só dentro da sessão atual.
+  }
+}
+
+const sessionAccounts = {
+  _map: loadMap("optic_accounts"),
+  get(key) { return this._map.get(key); },
+  set(key, value) { this._map.set(key, value); saveMap("optic_accounts", this._map); },
+};
+const sessionPosts = {
+  _map: loadMap("optic_posts"),
+  get(key) { return this._map.get(key); },
+  set(key, value) { this._map.set(key, value); saveMap("optic_posts", this._map); },
+  delete(key) { this._map.delete(key); saveMap("optic_posts", this._map); },
+  values() { return this._map.values(); },
+};
 let sessionListeners = [];
 function notifyPostsChanged() {
   sessionListeners.forEach((fn) => fn());
@@ -342,7 +372,7 @@ function LoginScreen({ onLogin }) {
         </div>
 
         <p className="text-center text-xs mt-5" style={{ color: "#8C7A6E" }}>
-          Versão de teste — contas e posts vivem só nesta sessão do artifact
+          Cada pessoa da equipa entra com a sua própria conta neste dispositivo
         </p>
       </div>
     </div>
