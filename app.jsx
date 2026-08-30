@@ -103,6 +103,65 @@ async function apiDeletePost(id) {
   const res = await fetch("/.netlify/functions/posts?id=" + encodeURIComponent(id), { method: "DELETE" });
   return res.json();
 }
+async function apiCreateVideo(topic) {
+  const res = await fetch("/.netlify/functions/video-create", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ topic }),
+  });
+  return res.json();
+}
+async function apiVideoStatus(sessionId) {
+  const res = await fetch("/.netlify/functions/video-status?session_id=" + encodeURIComponent(sessionId));
+  return res.json();
+}
+async function apiListImages() {
+  const res = await fetch("/.netlify/functions/images");
+  const data = await res.json();
+  return data.ok ? data.images : [];
+}
+async function apiUploadImage(filename, tags, dataUrl) {
+  const res = await fetch("/.netlify/functions/images", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ filename, tags, dataUrl }),
+  });
+  return res.json();
+}
+async function apiDeleteImage(id) {
+  const res = await fetch("/.netlify/functions/images?id=" + encodeURIComponent(id), { method: "DELETE" });
+  return res.json();
+}
+async function apiSearchStock(query) {
+  const res = await fetch("/.netlify/functions/stock-images?q=" + encodeURIComponent(query));
+  return res.json();
+}
+async function apiContentPlan() {
+  const res = await fetch("/.netlify/functions/content-plan");
+  return res.json();
+}
+function resizeImageFile(file, maxDim = 1024) {
+  return new Promise((resolve, reject) => {
+    const img = new window.Image();
+    const reader = new FileReader();
+    reader.onload = (e) => { img.src = e.target.result; };
+    reader.onerror = reject;
+    img.onload = () => {
+      let { width, height } = img;
+      if (width > maxDim || height > maxDim) {
+        if (width > height) { height = Math.round((height * maxDim) / width); width = maxDim; }
+        else { width = Math.round((width * maxDim) / height); height = maxDim; }
+      }
+      const canvas = document.createElement("canvas");
+      canvas.width = width;
+      canvas.height = height;
+      canvas.getContext("2d").drawImage(img, 0, 0, width, height);
+      resolve(canvas.toDataURL("image/jpeg", 0.82));
+    };
+    img.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
 
 function useStorageStatus() {
   const [status, setStatus] = useState("idle");
@@ -346,6 +405,7 @@ function Generator({ user, onSaved, initialCategory }) {
   const [result, setResult] = useState(null);
   const [error, setError] = useState("");
   const [media, setMedia] = useState([]);
+  const [showLibraryPicker, setShowLibraryPicker] = useState(false);
   const [platform, setPlatform] = useState({ instagram: true, facebook: true });
   const fileRef = useRef(null);
 
@@ -581,6 +641,23 @@ Responde APENAS com um objeto JSON, sem markdown, sem texto antes ou depois, no 
               </button>
               <input ref={fileRef} type="file" multiple accept="image/*,video/*" className="hidden" onChange={handleFiles} />
             </div>
+            <button
+              onClick={() => setShowLibraryPicker((v) => !v)}
+              className="text-xs font-medium flex items-center gap-1"
+              style={{ color: "#8B3A4B" }}
+            >
+              <ImageIcon size={12} /> {showLibraryPicker ? "Fechar biblioteca" : "Escolher da biblioteca ou stock"}
+            </button>
+            {showLibraryPicker && (
+              <div className="mt-3 p-3 rounded-lg" style={{ background: "#FBF4EC", border: "1px solid #E6D6C7" }}>
+                <ImageLibrary
+                  onSelect={(img) => {
+                    setMedia((m) => [...m, img]);
+                    setShowLibraryPicker(false);
+                  }}
+                />
+              </div>
+            )}
           </div>
 
           <div className="flex items-center gap-4 mb-5">
@@ -748,10 +825,26 @@ function Library({ refreshKey }) {
 --------------------------------------------------------- */
 function Dashboard({ user, onCreate, onOpenCategory, refreshKey, onOpenLibrary }) {
   const [posts, setPosts] = useState([]);
+  const [plan, setPlan] = useState(null);
+  const [planLoading, setPlanLoading] = useState(false);
+  const [planError, setPlanError] = useState("");
 
   useEffect(() => {
     apiListPosts().then(setPosts).catch(() => setPosts([]));
   }, [refreshKey]);
+
+  async function loadPlan() {
+    setPlanLoading(true);
+    setPlanError("");
+    try {
+      const result = await apiContentPlan();
+      if (!result.ok) setPlanError(result.error || "Não consegui gerar sugestões.");
+      else setPlan(result.suggestions);
+    } catch (err) {
+      setPlanError("Erro: " + (err?.message || String(err)));
+    }
+    setPlanLoading(false);
+  }
 
   const publicados = posts.filter((p) => p.status === "publicado").length;
   const prontos = posts.filter((p) => p.status === "pronto").length;
@@ -831,6 +924,48 @@ function Dashboard({ user, onCreate, onOpenCategory, refreshKey, onOpenLibrary }
       )}
 
       <div className="flex items-center justify-between mb-3">
+        <div style={{ color: "#4A1E2A" }} className="text-sm font-medium">Plano de conteúdo (IA)</div>
+        <button onClick={loadPlan} disabled={planLoading} className="text-xs" style={{ color: "#8B3A4B" }}>
+          {planLoading ? "A analisar..." : plan ? "Atualizar" : "Gerar sugestões"}
+        </button>
+      </div>
+      {planError && (
+        <div className="flex items-start gap-2 text-sm mb-4" style={{ color: "#C24444" }}>
+          <AlertCircle size={14} className="mt-0.5 shrink-0" /> {planError}
+        </div>
+      )}
+      {plan && (
+        <div className="space-y-2 mb-6">
+          {plan.map((s, i) => {
+            const cat = CATEGORIES.find((c) => c.id === s.category);
+            return (
+              <button
+                key={i}
+                onClick={() => onOpenCategory(s.category)}
+                className="w-full flex items-start gap-3 p-3.5 rounded-2xl text-left"
+                style={{ background: "#FBF4EC", border: "1px solid #F3E3D3" }}
+              >
+                {cat && (
+                  <div className="w-8 h-8 rounded-full flex items-center justify-center shrink-0" style={{ background: "#F3E3D3" }}>
+                    <cat.icon size={14} color="#8B3A4B" strokeWidth={1.75} />
+                  </div>
+                )}
+                <div className="min-w-0">
+                  <div style={{ color: "#4A1E2A" }} className="text-sm font-medium">{s.label}</div>
+                  <div style={{ color: "#8C7A6E" }} className="text-xs">{s.reason}</div>
+                </div>
+              </button>
+            );
+          })}
+        </div>
+      )}
+      {!plan && !planLoading && !planError && (
+        <p style={{ color: "#B0A196" }} className="text-xs mb-6">
+          Toca em "Gerar sugestões" para a IA analisar o que já publicaste e recomendar os próximos 3 conteúdos.
+        </p>
+      )}
+
+      <div className="flex items-center justify-between mb-3">
         <div style={{ color: "#4A1E2A" }} className="text-sm font-medium">Sugestões para hoje</div>
       </div>
       <div className="space-y-2">
@@ -862,7 +997,150 @@ function Dashboard({ user, onCreate, onOpenCategory, refreshKey, onOpenLibrary }
 /* ---------------------------------------------------------
    APP
 --------------------------------------------------------- */
-export default function OpticApp() {
+/* ---------------------------------------------------------
+   GERADOR DE VÍDEO
+--------------------------------------------------------- */
+function VideoGenerator({ onSaved }) {
+  const [topic, setTopic] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [phase, setPhase] = useState(""); // "scripting" | "processing" | "completed" | "failed"
+  const [videoUrl, setVideoUrl] = useState(null);
+  const [error, setError] = useState("");
+  const pollRef = useRef(null);
+
+  useEffect(() => {
+    return () => { if (pollRef.current) clearInterval(pollRef.current); };
+  }, []);
+
+  async function generate() {
+    if (!topic.trim()) return;
+    setLoading(true);
+    setError("");
+    setVideoUrl(null);
+    setPhase("scripting");
+
+    try {
+      const result = await apiCreateVideo(topic);
+      if (!result.ok) {
+        setError(result.error || "Não consegui iniciar a geração do vídeo.");
+        setLoading(false);
+        setPhase("");
+        return;
+      }
+      const sessionId = result.sessionId;
+
+      pollRef.current = setInterval(async () => {
+        try {
+          const status = await apiVideoStatus(sessionId);
+          if (!status.ok) {
+            clearInterval(pollRef.current);
+            setError(status.error || "Erro ao verificar o vídeo.");
+            setLoading(false);
+            setPhase("failed");
+            return;
+          }
+          setPhase(status.status);
+          if (status.status === "completed" && status.videoUrl) {
+            clearInterval(pollRef.current);
+            setVideoUrl(status.videoUrl);
+            setLoading(false);
+          } else if (status.status === "failed") {
+            clearInterval(pollRef.current);
+            setError("A geração do vídeo falhou do lado do HeyGen. Tenta outra vez.");
+            setLoading(false);
+          }
+        } catch (err) {
+          clearInterval(pollRef.current);
+          setError("Erro ao verificar o vídeo: " + (err?.message || String(err)));
+          setLoading(false);
+        }
+      }, 6000);
+    } catch (err) {
+      setError("Não foi possível ligar ao servidor: " + (err?.message || String(err)));
+      setLoading(false);
+      setPhase("");
+    }
+  }
+
+  const phaseLabel = {
+    scripting: "A escrever o guião...",
+    processing: "A gerar o vídeo (pode demorar alguns minutos)...",
+    completed: "Pronto!",
+    failed: "Falhou.",
+  };
+
+  return (
+    <div>
+      <h2 style={{ fontFamily: "Fraunces, serif", color: "#4A1E2A" }} className="text-xl mb-1">
+        Vídeo explicativo com IA
+      </h2>
+      <p style={{ color: "#8C7A6E" }} className="text-sm mb-6">
+        Escreve o tema — a IA trata do guião, apresentador e montagem.
+      </p>
+
+      <div className="rounded-xl p-5 mb-4" style={{ background: "#fff", border: "1px solid #E6D6C7" }}>
+        <label style={{ color: "#8C7A6E" }} className="text-xs block mb-2">
+          Sobre o que deve ser o vídeo?
+        </label>
+        <textarea
+          value={topic}
+          onChange={(e) => setTopic(e.target.value)}
+          rows={2}
+          disabled={loading}
+          className="w-full p-3 rounded-lg text-sm outline-none resize-none"
+          style={{ background: "#FBF4EC", border: "1px solid #E6D6C7", color: "#4A1E2A" }}
+          placeholder="Ex: diferença entre lentes progressivas e monofocais"
+        />
+        <button
+          onClick={generate}
+          disabled={loading || !topic.trim()}
+          className="mt-3 px-4 py-2.5 rounded-lg text-sm font-medium flex items-center gap-2"
+          style={{ background: "#4A1E2A", color: "#FBF4EC", opacity: loading ? 0.7 : 1 }}
+        >
+          {loading ? <Loader2 size={15} className="animate-spin" /> : <Video size={15} />}
+          {loading ? (phaseLabel[phase] || "A trabalhar...") : "Gerar vídeo"}
+        </button>
+
+        {error && (
+          <div className="flex items-start gap-2 text-sm mt-3" style={{ color: "#C24444" }}>
+            <AlertCircle size={14} className="mt-0.5 shrink-0" /> {error}
+          </div>
+        )}
+
+        {loading && (
+          <p style={{ color: "#B0A196" }} className="text-xs mt-3">
+            Isto pode demorar alguns minutos — não feches esta página.
+          </p>
+        )}
+      </div>
+
+      {videoUrl && (
+        <div className="rounded-xl p-5" style={{ background: "#fff", border: "1px solid #E6D6C7" }}>
+          <video controls src={videoUrl} className="w-full rounded-lg mb-4" style={{ maxHeight: 420 }} />
+          <div className="flex gap-2">
+            <a
+              href={videoUrl}
+              download
+              className="px-4 py-2.5 rounded-lg text-sm font-medium flex items-center gap-2"
+              style={{ background: "#8B3A4B", color: "#FBF4EC" }}
+            >
+              Descarregar vídeo
+            </a>
+            <button
+              onClick={() => { setVideoUrl(null); setTopic(""); setPhase(""); }}
+              className="px-4 py-2.5 rounded-lg text-sm"
+              style={{ background: "#FBF4EC", color: "#8C7A6E", border: "1px solid #E6D6C7" }}
+            >
+              Gerar outro
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+
   const [user, setUser] = useState(null);
   const [tab, setTab] = useState("dashboard");
   const [refreshKey, setRefreshKey] = useState(0);
@@ -916,10 +1194,12 @@ export default function OpticApp() {
           </div>
         </header>
 
-        <nav className="flex gap-1 px-6 pt-4 max-w-3xl mx-auto">
+        <nav className="flex gap-1 px-6 pt-4 max-w-3xl mx-auto overflow-x-auto">
           {[
             { id: "dashboard", label: "Início", icon: Eye },
             { id: "gerar", label: "Gerar conteúdo", icon: Sparkles },
+            { id: "video", label: "Vídeo", icon: Video },
+            { id: "imagens", label: "Imagens", icon: ImageIcon },
             { id: "biblioteca", label: "Biblioteca", icon: Layers },
           ].map((t) => (
             <button
@@ -929,7 +1209,7 @@ export default function OpticApp() {
                 else setTab(t.id);
                 setRefreshKey((k) => k + 1);
               }}
-              className="flex items-center gap-1.5 text-sm px-3.5 py-2 rounded-t-lg"
+              className="flex items-center gap-1.5 text-sm px-3.5 py-2 rounded-t-lg shrink-0"
               style={{
                 background: tab === t.id ? "#F4E9DE" : "transparent",
                 color: tab === t.id ? "#4A1E2A" : "#B0A196",
@@ -959,9 +1239,277 @@ export default function OpticApp() {
               onSaved={() => { setTab("dashboard"); setRefreshKey((k) => k + 1); }}
             />
           )}
+          {tab === "video" && <VideoGenerator />}
           {tab === "biblioteca" && <Library refreshKey={refreshKey} />}
+          {tab === "imagens" && <ImageLibrary />}
         </main>
       </div>
     </>
+  );
+}
+
+/* ---------------------------------------------------------
+   BIBLIOTECA DE IMAGENS (própria + stock)
+   Pode ser usada em modo "gestão" (separador Imagens) ou
+   modo "escolher" (dentro do Gerador, passando onSelect).
+--------------------------------------------------------- */
+function ImageLibrary({ onSelect }) {
+  const [subTab, setSubTab] = useState("minha");
+  const [images, setImages] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [tagsInput, setTagsInput] = useState("");
+  const [pendingFile, setPendingFile] = useState(null);
+  const [pendingPreview, setPendingPreview] = useState(null);
+  const [uploading, setUploading] = useState(false);
+  const [query, setQuery] = useState("");
+  const [stockResults, setStockResults] = useState([]);
+  const [stockLoading, setStockLoading] = useState(false);
+  const [error, setError] = useState("");
+  const fileRef = useRef(null);
+
+  useEffect(() => { loadImages(); }, []);
+
+  async function loadImages() {
+    setLoading(true);
+    try { setImages(await apiListImages()); } catch { setImages([]); }
+    setLoading(false);
+  }
+
+  async function handleFilePicked(e) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setPendingFile(file);
+    setPendingPreview(URL.createObjectURL(file));
+  }
+
+  async function confirmUpload() {
+    if (!pendingFile) return;
+    setUploading(true);
+    setError("");
+    try {
+      const dataUrl = await resizeImageFile(pendingFile);
+      const tags = tagsInput.split(",").map((t) => t.trim()).filter(Boolean);
+      await apiUploadImage(pendingFile.name, tags, dataUrl);
+      setPendingFile(null);
+      setPendingPreview(null);
+      setTagsInput("");
+      loadImages();
+    } catch (err) {
+      setError("Não consegui enviar a imagem: " + (err?.message || String(err)));
+    }
+    setUploading(false);
+  }
+
+  async function removeImage(id) {
+    await apiDeleteImage(id);
+    loadImages();
+  }
+
+  async function searchStock() {
+    if (!query.trim()) return;
+    setStockLoading(true);
+    setError("");
+    try {
+      const result = await apiSearchStock(query);
+      if (!result.ok) { setError(result.error || "Erro na pesquisa."); setStockResults([]); }
+      else setStockResults(result.results || []);
+    } catch (err) {
+      setError("Erro na pesquisa: " + (err?.message || String(err)));
+    }
+    setStockLoading(false);
+  }
+
+  async function saveStockToLibrary(item) {
+    try {
+      const res = await fetch(item.full);
+      const blob = await res.blob();
+      const dataUrl = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = reject;
+        reader.readAsDataURL(blob);
+      });
+      await apiUploadImage("stock-" + item.id, ["stock", item.credit], dataUrl);
+      loadImages();
+    } catch (err) {
+      setError("Não consegui guardar essa imagem: " + (err?.message || String(err)));
+    }
+  }
+
+  const filteredOwn = images;
+
+  return (
+    <div>
+      {!onSelect && (
+        <>
+          <h2 style={{ fontFamily: "Fraunces, serif", color: "#4A1E2A" }} className="text-xl mb-1">
+            Imagens
+          </h2>
+          <p style={{ color: "#8C7A6E" }} className="text-sm mb-5">
+            A tua biblioteca de fotos, ou pesquisa fotos de stock para inspiração.
+          </p>
+        </>
+      )}
+
+      <div className="flex gap-1.5 mb-4">
+        {["minha", "stock"].map((t) => (
+          <button
+            key={t}
+            onClick={() => setSubTab(t)}
+            className="text-xs px-3 py-1.5 rounded-full"
+            style={{
+              background: subTab === t ? "#4A1E2A" : "#fff",
+              color: subTab === t ? "#FBF4EC" : "#8C7A6E",
+              border: "1px solid #E6D6C7",
+            }}
+          >
+            {t === "minha" ? "A minha biblioteca" : "Pesquisar stock"}
+          </button>
+        ))}
+      </div>
+
+      {error && (
+        <div className="flex items-start gap-2 text-sm mb-3" style={{ color: "#C24444" }}>
+          <AlertCircle size={14} className="mt-0.5 shrink-0" /> {error}
+        </div>
+      )}
+
+      {subTab === "minha" && (
+        <div>
+          <div className="rounded-xl p-4 mb-4" style={{ background: "#fff", border: "1px solid #E6D6C7" }}>
+            {!pendingPreview ? (
+              <button
+                onClick={() => fileRef.current?.click()}
+                className="w-full py-6 rounded-lg flex flex-col items-center gap-2 text-sm"
+                style={{ border: "1.5px dashed #E6D6C7", color: "#8C7A6E" }}
+              >
+                <Plus size={18} />
+                Adicionar foto da loja
+              </button>
+            ) : (
+              <div>
+                <img src={pendingPreview} alt="" className="w-full rounded-lg mb-3" style={{ maxHeight: 220, objectFit: "cover" }} />
+                <input
+                  value={tagsInput}
+                  onChange={(e) => setTagsInput(e.target.value)}
+                  placeholder="Etiquetas separadas por vírgula (ex: óculos de sol, Ray-Ban)"
+                  className="w-full p-2.5 rounded-lg text-sm outline-none mb-2"
+                  style={{ background: "#FBF4EC", border: "1px solid #E6D6C7", color: "#4A1E2A" }}
+                />
+                <div className="flex gap-2">
+                  <button
+                    onClick={confirmUpload}
+                    disabled={uploading}
+                    className="px-4 py-2 rounded-lg text-sm font-medium"
+                    style={{ background: "#8B3A4B", color: "#FBF4EC", opacity: uploading ? 0.7 : 1 }}
+                  >
+                    {uploading ? "A enviar..." : "Guardar na biblioteca"}
+                  </button>
+                  <button
+                    onClick={() => { setPendingFile(null); setPendingPreview(null); }}
+                    className="px-4 py-2 rounded-lg text-sm"
+                    style={{ background: "#FBF4EC", color: "#8C7A6E", border: "1px solid #E6D6C7" }}
+                  >
+                    Cancelar
+                  </button>
+                </div>
+              </div>
+            )}
+            <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={handleFilePicked} />
+          </div>
+
+          {loading && (
+            <div className="flex items-center gap-2 text-sm" style={{ color: "#B0A196" }}>
+              <Loader2 size={14} className="animate-spin" /> A carregar...
+            </div>
+          )}
+
+          {!loading && filteredOwn.length === 0 && (
+            <p style={{ color: "#B0A196" }} className="text-sm text-center py-8">Ainda não tens fotos guardadas.</p>
+          )}
+
+          <div className="grid grid-cols-3 gap-2">
+            {filteredOwn.map((img) => (
+              <div key={img.id} className="relative rounded-lg overflow-hidden" style={{ aspectRatio: "1", border: "1px solid #E6D6C7" }}>
+                <img src={img.dataUrl} alt="" className="w-full h-full object-cover" />
+                {onSelect ? (
+                  <button
+                    onClick={() => onSelect({ name: img.filename, url: img.dataUrl, type: "image" })}
+                    className="absolute inset-0 flex items-center justify-center text-xs font-medium opacity-0 hover:opacity-100 transition-opacity"
+                    style={{ background: "rgba(74,30,42,0.75)", color: "#FBF4EC" }}
+                  >
+                    Usar
+                  </button>
+                ) : (
+                  <button
+                    onClick={() => removeImage(img.id)}
+                    className="absolute top-1 right-1 w-5 h-5 rounded-full flex items-center justify-center"
+                    style={{ background: "rgba(74,30,42,0.7)" }}
+                  >
+                    <X size={11} color="#fff" />
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {subTab === "stock" && (
+        <div>
+          <div className="flex gap-2 mb-4">
+            <input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && searchStock()}
+              placeholder="Ex: óculos de sol, ótica, moda"
+              className="flex-1 p-2.5 rounded-lg text-sm outline-none"
+              style={{ background: "#fff", border: "1px solid #E6D6C7", color: "#4A1E2A" }}
+            />
+            <button
+              onClick={searchStock}
+              disabled={stockLoading}
+              className="px-4 py-2 rounded-lg text-sm font-medium"
+              style={{ background: "#4A1E2A", color: "#FBF4EC" }}
+            >
+              {stockLoading ? <Loader2 size={14} className="animate-spin" /> : "Pesquisar"}
+            </button>
+          </div>
+
+          <div className="grid grid-cols-3 gap-2">
+            {stockResults.map((item) => (
+              <div key={item.id} className="relative rounded-lg overflow-hidden" style={{ aspectRatio: "1", border: "1px solid #E6D6C7" }}>
+                <img src={item.thumb} alt="" className="w-full h-full object-cover" />
+                <div
+                  className="absolute inset-0 flex flex-col items-center justify-center gap-1 opacity-0 hover:opacity-100 transition-opacity text-center p-1"
+                  style={{ background: "rgba(74,30,42,0.85)" }}
+                >
+                  {onSelect && (
+                    <button
+                      onClick={() => onSelect({ name: item.credit, url: item.full, type: "image" })}
+                      className="text-xs font-medium px-2 py-1 rounded"
+                      style={{ background: "#8B3A4B", color: "#FBF4EC" }}
+                    >
+                      Usar
+                    </button>
+                  )}
+                  <button
+                    onClick={() => saveStockToLibrary(item)}
+                    className="text-[10px] px-2 py-1 rounded"
+                    style={{ background: "#FBF4EC", color: "#4A1E2A" }}
+                  >
+                    Guardar
+                  </button>
+                  <span style={{ color: "#E6D6C7" }} className="text-[9px]">© {item.credit}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+          {stockResults.length === 0 && !stockLoading && (
+            <p style={{ color: "#B0A196" }} className="text-sm text-center py-8">Pesquisa por um termo para veres resultados.</p>
+          )}
+        </div>
+      )}
+    </div>
   );
 }
