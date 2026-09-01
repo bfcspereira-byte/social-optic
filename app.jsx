@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from "react";
 import {
   Eye, Lock, Mail, User, LogOut, Sparkles, RefreshCw, Image as ImageIcon,
   Video, Check, X, Copy, ChevronRight, Glasses, Sun, Wrench, Shirt,
-  Layers, Loader2, AlertCircle, Plus, Trash2
+  Layers, Loader2, AlertCircle, Plus, Trash2, Settings as SettingsIcon
 } from "lucide-react";
 
 /* ---------------------------------------------------------
@@ -1140,7 +1140,136 @@ function VideoGenerator({ onSaved }) {
   );
 }
 
+/* ---------------------------------------------------------
+   DEFINIÇÕES (chaves de API guardadas na app, via Netlify Blobs)
+--------------------------------------------------------- */
+function SettingsPanel() {
+  const [settings, setSettings] = useState([]);
+  const [heygenKey, setHeygenKey] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
 
+  useEffect(() => { load(); }, []);
+
+  async function load() {
+    setLoading(true);
+    try {
+      const res = await fetch("/.netlify/functions/settings");
+      const data = await res.json();
+      setSettings(data.ok ? data.settings : []);
+    } catch {
+      setSettings([]);
+    }
+    setLoading(false);
+  }
+
+  const heygenEntry = settings.find((s) => s.key === "heygenApiKey");
+
+  async function save() {
+    if (!heygenKey.trim()) return;
+    setSaving(true);
+    setError("");
+    setSuccess("");
+    try {
+      const res = await fetch("/.netlify/functions/settings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ key: "heygenApiKey", value: heygenKey.trim() }),
+      });
+      const data = await res.json();
+      if (!data.ok) {
+        setError(data.error || "Não consegui guardar a chave.");
+        setSaving(false);
+        return;
+      }
+      setHeygenKey("");
+      setSuccess("Chave guardada com sucesso.");
+      await load();
+    } catch (err) {
+      setError("Erro ao guardar: " + (err?.message || String(err)));
+    }
+    setSaving(false);
+  }
+
+  async function remove() {
+    setSaving(true);
+    setError("");
+    setSuccess("");
+    try {
+      await fetch("/.netlify/functions/settings?key=heygenApiKey", { method: "DELETE" });
+      setSuccess("Chave removida.");
+      await load();
+    } catch (err) {
+      setError("Erro ao remover: " + (err?.message || String(err)));
+    }
+    setSaving(false);
+  }
+
+  return (
+    <div>
+      <h2 style={{ fontFamily: "Fraunces, serif", color: "#4A1E2A" }} className="text-xl mb-1">
+        Definições
+      </h2>
+      <p style={{ color: "#8C7A6E" }} className="text-sm mb-6">
+        Chaves de API usadas pela aplicação. Ficam guardadas em segurança no servidor.
+      </p>
+
+      <div className="rounded-xl p-5 mb-4" style={{ background: "#fff", border: "1px solid #E6D6C7" }}>
+        <div className="flex items-center justify-between mb-2">
+          <label style={{ color: "#4A1E2A" }} className="text-sm font-medium">Chave da API do HeyGen</label>
+          {!loading && heygenEntry?.hasValue && (
+            <span className="text-xs" style={{ color: "#5F7350" }}>
+              Configurada ({heygenEntry.masked})
+            </span>
+          )}
+        </div>
+        <p style={{ color: "#8C7A6E" }} className="text-xs mb-3">
+          Usada para gerar os vídeos com apresentador. Obtém a tua chave em heygen.com → Settings → API.
+        </p>
+        <div className="flex flex-col sm:flex-row gap-2">
+          <input
+            type="password"
+            value={heygenKey}
+            onChange={(e) => setHeygenKey(e.target.value)}
+            placeholder={heygenEntry?.hasValue ? "Nova chave (para substituir)" : "Cola aqui a tua chave"}
+            className="flex-1 p-2.5 rounded-lg text-sm outline-none"
+            style={{ background: "#FBF4EC", border: "1px solid #E6D6C7", color: "#4A1E2A" }}
+          />
+          <button
+            onClick={save}
+            disabled={saving || !heygenKey.trim()}
+            className="px-4 py-2 rounded-lg text-sm font-medium shrink-0"
+            style={{ background: "#8B3A4B", color: "#FBF4EC", opacity: saving ? 0.7 : 1 }}
+          >
+            Guardar
+          </button>
+        </div>
+        {!loading && heygenEntry?.hasValue && (
+          <button onClick={remove} disabled={saving} className="text-xs mt-3" style={{ color: "#C24444" }}>
+            Remover chave
+          </button>
+        )}
+        {error && (
+          <div className="flex items-center gap-2 text-sm mt-3" style={{ color: "#C24444" }}>
+            <AlertCircle size={14} /> {error}
+          </div>
+        )}
+        {success && (
+          <div className="flex items-center gap-2 text-sm mt-3" style={{ color: "#5F7350" }}>
+            <Check size={14} /> {success}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ---------------------------------------------------------
+   APP
+--------------------------------------------------------- */
+export default function OpticApp() {
   const [user, setUser] = useState(null);
   const [tab, setTab] = useState("dashboard");
   const [refreshKey, setRefreshKey] = useState(0);
@@ -1201,6 +1330,7 @@ function VideoGenerator({ onSaved }) {
             { id: "video", label: "Vídeo", icon: Video },
             { id: "imagens", label: "Imagens", icon: ImageIcon },
             { id: "biblioteca", label: "Biblioteca", icon: Layers },
+            { id: "definicoes", label: "Definições", icon: SettingsIcon },
           ].map((t) => (
             <button
               key={t.id}
@@ -1242,6 +1372,7 @@ function VideoGenerator({ onSaved }) {
           {tab === "video" && <VideoGenerator />}
           {tab === "biblioteca" && <Library refreshKey={refreshKey} />}
           {tab === "imagens" && <ImageLibrary />}
+          {tab === "definicoes" && <SettingsPanel />}
         </main>
       </div>
     </>
