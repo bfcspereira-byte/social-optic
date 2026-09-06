@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from "react";
 import {
   Eye, Lock, Mail, User, LogOut, Sparkles, RefreshCw, Image as ImageIcon,
   Video, Check, X, Copy, ChevronRight, Glasses, Sun, Wrench, Shirt,
-  Layers, Loader2, AlertCircle, Plus, Trash2, Settings as SettingsIcon, LayoutGrid
+  Layers, Loader2, AlertCircle, Plus, Trash2, Settings as SettingsIcon, LayoutGrid, Pencil
 } from "lucide-react";
 
 /* ---------------------------------------------------------
@@ -1514,13 +1514,41 @@ function SlideCanvas({ slide, templateId, imageUrl }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [imageUrl, templateId, slide.headline, slide.subheadline, slide.number, JSON.stringify(slide.bullets)]);
 
-  function download() {
+  function saveOrShare() {
     const canvas = canvasRef.current;
     if (!canvas) return;
-    const link = document.createElement("a");
-    link.download = `opticalia-carrossel-${slide.number || "final"}.png`;
-    link.href = canvas.toDataURL("image/png");
-    link.click();
+    const filename = `opticalia-carrossel-${slide.number || "final"}.png`;
+
+    canvas.toBlob(async (blob) => {
+      if (!blob) return;
+
+      // 1) Partilha nativa do telemóvel — dá logo a opção "Guardar imagem"/"Guardar na galeria"
+      try {
+        const file = new File([blob], filename, { type: "image/png" });
+        if (navigator.canShare && navigator.canShare({ files: [file] })) {
+          await navigator.share({ files: [file], title: filename });
+          return;
+        }
+      } catch (err) {
+        // utilizador cancelou a partilha ou o browser não suporta — cai para o método abaixo
+      }
+
+      // 2) Alternativa: abrir a imagem numa nova aba (mantém premido para "Guardar imagem")
+      //    ou descarregar diretamente, em computador
+      const url = URL.createObjectURL(blob);
+      const isIOS = /iP(hone|od|ad)/.test(navigator.userAgent || "");
+      if (isIOS) {
+        window.open(url, "_blank");
+      } else {
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = filename;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+      }
+      setTimeout(() => URL.revokeObjectURL(url), 30000);
+    }, "image/png");
   }
 
   return (
@@ -1534,25 +1562,80 @@ function SlideCanvas({ slide, templateId, imageUrl }) {
       />
       {imageUrl && (
         <button
-          onClick={download}
+          onClick={saveOrShare}
           disabled={!ready}
           className="w-full text-xs font-medium py-2"
           style={{ background: "#4A1E2A", color: "#FBF4EC", opacity: ready ? 1 : 0.6 }}
         >
-          Descarregar PNG
+          Guardar imagem
         </button>
       )}
     </div>
   );
 }
 
-function CarouselGenerator() {
+function CarouselGenerator({ user }) {
   const [topic, setTopic] = useState("");
   const [loading, setLoading] = useState(false);
   const [slides, setSlides] = useState([]);
   const [templateId, setTemplateId] = useState("editorial");
   const [error, setError] = useState("");
   const [pickerFor, setPickerFor] = useState(null);
+  const [editingFor, setEditingFor] = useState(null);
+  const [savingDraft, setSavingDraft] = useState(false);
+  const [saveMsg, setSaveMsg] = useState("");
+
+  async function saveDraft() {
+    if (!slides.length) return;
+    setSavingDraft(true);
+    setSaveMsg("");
+    try {
+      const legenda = slides
+        .map((s) => `${s.number ? s.number + ". " : ""}${s.headline}${s.subheadline ? " — " + s.subheadline : ""}`)
+        .join("\n");
+      const post = {
+        id: "post_" + Date.now(),
+        category: "carrossel",
+        status: "rascunho",
+        author: user?.name || "Equipa",
+        createdAt: new Date().toISOString(),
+        platform: { instagram: true, facebook: false },
+        titulo_interno: (topic || "Carrossel").slice(0, 60),
+        legenda,
+        hashtags: [],
+        sugestao_visual: `Carrossel de ${slides.length} slides (estilo "${CAROUSEL_TEMPLATES.find((t) => t.id === templateId)?.label}"). Volta ao separador Carrossel para escolher as fotos e guardar cada imagem.`,
+        cta: slides.find((s) => s.isCta)?.headline || "",
+      };
+      await apiSavePost(post);
+      setSaveMsg("Guião guardado na Biblioteca como rascunho.");
+    } catch (err) {
+      setSaveMsg("Não consegui guardar: " + (err?.message || String(err)));
+    }
+    setSavingDraft(false);
+  }
+
+  function updateSlideField(id, field, value) {
+    setSlides((sl) => sl.map((s) => (s.id === id ? { ...s, [field]: value } : s)));
+  }
+  function updateBullet(id, idx, value) {
+    setSlides((sl) => sl.map((s) => {
+      if (s.id !== id) return s;
+      const bullets = [...(s.bullets || [])];
+      bullets[idx] = value;
+      return { ...s, bullets };
+    }));
+  }
+  function addBullet(id) {
+    setSlides((sl) => sl.map((s) => (s.id === id ? { ...s, bullets: [...(s.bullets || []), ""] } : s)));
+  }
+  function removeBullet(id, idx) {
+    setSlides((sl) => sl.map((s) => {
+      if (s.id !== id) return s;
+      const bullets = [...(s.bullets || [])];
+      bullets.splice(idx, 1);
+      return { ...s, bullets };
+    }));
+  }
 
   async function generate() {
     if (!topic.trim()) return;
@@ -1627,6 +1710,24 @@ function CarouselGenerator() {
             ← Começar outro carrossel
           </button>
 
+          <div className="flex items-center justify-between mb-5 flex-wrap gap-2">
+            <button
+              onClick={saveDraft}
+              disabled={savingDraft}
+              className="text-xs font-medium px-3 py-1.5 rounded-full flex items-center gap-1.5"
+              style={{ background: "#F3E3D3", color: "#6B2A3D" }}
+            >
+              {savingDraft ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />}
+              {savingDraft ? "A guardar..." : "Guardar guião na biblioteca"}
+            </button>
+            {saveMsg && (
+              <span style={{ color: "#5F7350" }} className="text-xs">{saveMsg}</span>
+            )}
+          </div>
+          <p style={{ color: "#B0A196" }} className="text-[11px] -mt-3 mb-5">
+            Isto guarda o texto do carrossel (para a equipa acompanhar). As imagens de cada slide guardam-se individualmente com o botão "Guardar imagem".
+          </p>
+
           <div className="mb-5">
             <div style={{ color: "#8C7A6E" }} className="text-xs mb-2">
               Estilo visual (aplica-se a todos os slides)
@@ -1657,14 +1758,71 @@ function CarouselGenerator() {
                   <span style={{ color: "#B0A196" }} className="text-[11px]">
                     {slide.number ? `Slide ${slide.number}` : "Slide final (CTA)"}
                   </span>
-                  <button
-                    onClick={() => setPickerFor(pickerFor === slide.id ? null : slide.id)}
-                    className="text-xs font-medium flex items-center gap-1"
-                    style={{ color: "#8B3A4B" }}
-                  >
-                    <ImageIcon size={12} /> {slide.image ? "Trocar foto" : "Escolher foto"}
-                  </button>
+                  <div className="flex items-center gap-3">
+                    <button
+                      onClick={() => setEditingFor(editingFor === slide.id ? null : slide.id)}
+                      className="text-xs font-medium flex items-center gap-1"
+                      style={{ color: "#8B3A4B" }}
+                    >
+                      <Pencil size={12} /> Editar texto
+                    </button>
+                    <button
+                      onClick={() => setPickerFor(pickerFor === slide.id ? null : slide.id)}
+                      className="text-xs font-medium flex items-center gap-1"
+                      style={{ color: "#8B3A4B" }}
+                    >
+                      <ImageIcon size={12} /> {slide.image ? "Trocar foto" : "Escolher foto"}
+                    </button>
+                  </div>
                 </div>
+
+                {editingFor === slide.id && (
+                  <div className="mt-3 p-3 rounded-lg" style={{ background: "#FBF4EC", border: "1px solid #E6D6C7" }}>
+                    <label className="text-[11px] block mb-1" style={{ color: "#8C7A6E" }}>Título</label>
+                    <input
+                      value={slide.headline}
+                      onChange={(e) => updateSlideField(slide.id, "headline", e.target.value)}
+                      className="w-full p-2 rounded-lg text-sm outline-none mb-2"
+                      style={{ background: "#fff", border: "1px solid #E6D6C7", color: "#4A1E2A" }}
+                    />
+                    <label className="text-[11px] block mb-1" style={{ color: "#8C7A6E" }}>Subtítulo</label>
+                    <textarea
+                      value={slide.subheadline}
+                      onChange={(e) => updateSlideField(slide.id, "subheadline", e.target.value)}
+                      rows={2}
+                      className="w-full p-2 rounded-lg text-sm outline-none resize-none mb-2"
+                      style={{ background: "#fff", border: "1px solid #E6D6C7", color: "#4A1E2A" }}
+                    />
+                    <label className="text-[11px] block mb-1" style={{ color: "#8C7A6E" }}>Tópicos (opcional)</label>
+                    {(slide.bullets || []).map((b, idx) => (
+                      <div key={idx} className="flex gap-1.5 mb-1.5">
+                        <input
+                          value={b}
+                          onChange={(e) => updateBullet(slide.id, idx, e.target.value)}
+                          className="flex-1 p-2 rounded-lg text-sm outline-none"
+                          style={{ background: "#fff", border: "1px solid #E6D6C7", color: "#4A1E2A" }}
+                        />
+                        <button
+                          onClick={() => removeBullet(slide.id, idx)}
+                          className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0"
+                          style={{ background: "#fff", border: "1px solid #E6D6C7" }}
+                        >
+                          <X size={13} color="#8C7A6E" />
+                        </button>
+                      </div>
+                    ))}
+                    {(slide.bullets || []).length < 4 && (
+                      <button
+                        onClick={() => addBullet(slide.id)}
+                        className="text-xs font-medium flex items-center gap-1 mt-1"
+                        style={{ color: "#8B3A4B" }}
+                      >
+                        <Plus size={12} /> Adicionar tópico
+                      </button>
+                    )}
+                  </div>
+                )}
+
                 {pickerFor === slide.id && (
                   <div className="mt-3 p-3 rounded-lg" style={{ background: "#FBF4EC", border: "1px solid #E6D6C7" }}>
                     <ImageLibrary onSelect={(img) => setSlideImage(slide.id, img)} />
@@ -1784,7 +1942,7 @@ export default function OpticApp() {
             />
           )}
           {tab === "video" && <VideoGenerator />}
-          {tab === "carrossel" && <CarouselGenerator />}
+          {tab === "carrossel" && <CarouselGenerator user={user} />}
           {tab === "biblioteca" && <Library refreshKey={refreshKey} />}
           {tab === "imagens" && <ImageLibrary />}
           {tab === "definicoes" && <SettingsPanel />}
