@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from "react";
 import {
   Eye, Lock, Mail, User, LogOut, Sparkles, RefreshCw, Image as ImageIcon,
   Video, Check, X, Copy, ChevronRight, Glasses, Sun, Wrench, Shirt,
-  Layers, Loader2, AlertCircle, Plus, Trash2, Settings as SettingsIcon
+  Layers, Loader2, AlertCircle, Plus, Trash2, Settings as SettingsIcon, LayoutGrid
 } from "lucide-react";
 
 /* ---------------------------------------------------------
@@ -138,6 +138,14 @@ async function apiSearchStock(query) {
 }
 async function apiContentPlan() {
   const res = await fetch("/.netlify/functions/content-plan");
+  return res.json();
+}
+async function apiCarouselGenerate(topic) {
+  const res = await fetch("/.netlify/functions/carousel-generate", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ topic }),
+  });
   return res.json();
 }
 function resizeImageFile(file, maxDim = 1024) {
@@ -1267,6 +1275,411 @@ function SettingsPanel() {
 }
 
 /* ---------------------------------------------------------
+   CARROSSEL — motor de desenho (canvas) + gerador
+--------------------------------------------------------- */
+const CAROUSEL_W = 1080;
+const CAROUSEL_H = 1350;
+
+const CAROUSEL_TEMPLATES = [
+  { id: "editorial", label: "Editorial" },
+  { id: "destaques", label: "Destaques" },
+  { id: "citacao", label: "Minimalista" },
+];
+
+function drawImageCover(ctx, img, x, y, w, h) {
+  const imgRatio = img.width / img.height;
+  const boxRatio = w / h;
+  let sx, sy, sw, sh;
+  if (imgRatio > boxRatio) {
+    sh = img.height;
+    sw = sh * boxRatio;
+    sx = (img.width - sw) / 2;
+    sy = 0;
+  } else {
+    sw = img.width;
+    sh = sw / boxRatio;
+    sx = 0;
+    sy = (img.height - sh) / 2;
+  }
+  ctx.drawImage(img, sx, sy, sw, sh, x, y, w, h);
+}
+
+function wrapCanvasText(ctx, text, maxWidth) {
+  const words = (text || "").split(" ").filter(Boolean);
+  const lines = [];
+  let current = "";
+  words.forEach((word) => {
+    const test = current ? current + " " + word : word;
+    if (ctx.measureText(test).width > maxWidth && current) {
+      lines.push(current);
+      current = word;
+    } else {
+      current = test;
+    }
+  });
+  if (current) lines.push(current);
+  return lines;
+}
+
+function drawCarouselSlide(canvas, slide, templateId, bgImage) {
+  const ctx = canvas.getContext("2d");
+  const W = canvas.width;
+  const H = canvas.height;
+  ctx.clearRect(0, 0, W, H);
+  ctx.textAlign = "left";
+
+  // -------- DESTAQUES: cartão sólido em cima, foto em baixo --------
+  if (templateId === "destaques") {
+    const splitY = Math.round(H * 0.52);
+    ctx.fillStyle = "#FBF4EC";
+    ctx.fillRect(0, 0, W, splitY);
+    if (bgImage) drawImageCover(ctx, bgImage, 0, splitY, W, H - splitY);
+    else { ctx.fillStyle = "#E6D6C7"; ctx.fillRect(0, splitY, W, H - splitY); }
+    ctx.fillStyle = "#F2A93B";
+    ctx.fillRect(0, splitY - 4, W, 4);
+
+    const padX = 72;
+    let y = 130;
+
+    if (slide.number) {
+      ctx.fillStyle = "#F2A93B";
+      ctx.font = "700 46px sans-serif";
+      ctx.fillText(slide.number, padX, y);
+      y += 34;
+      ctx.fillStyle = "#F2A93B";
+      ctx.fillRect(padX, y, 90, 5);
+      y += 56;
+    }
+
+    ctx.fillStyle = "#4A1E2A";
+    ctx.font = "800 62px sans-serif";
+    wrapCanvasText(ctx, (slide.headline || "").toUpperCase(), W - padX * 2).forEach((line) => {
+      ctx.fillText(line, padX, y);
+      y += 68;
+    });
+    y += 14;
+
+    if (slide.subheadline) {
+      ctx.fillStyle = "#6B5A4E";
+      ctx.font = "400 32px sans-serif";
+      wrapCanvasText(ctx, slide.subheadline, W - padX * 2).forEach((line) => {
+        ctx.fillText(line, padX, y);
+        y += 40;
+      });
+      y += 14;
+    }
+
+    (slide.bullets || []).forEach((b) => {
+      if (y > splitY - 40) return;
+      ctx.beginPath();
+      ctx.fillStyle = "#8B3A4B";
+      ctx.arc(padX + 11, y - 11, 11, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = "#4A1E2A";
+      ctx.font = "600 30px sans-serif";
+      ctx.fillText(b, padX + 38, y);
+      y += 48;
+    });
+
+    ctx.fillStyle = "rgba(255,255,255,0.9)";
+    ctx.font = "600 24px sans-serif";
+    ctx.textAlign = "right";
+    ctx.fillText("Opticalia Felgueiras", W - 40, H - 36);
+    ctx.textAlign = "left";
+    return;
+  }
+
+  // -------- fundo cheio (EDITORIAL e CITAÇÃO) --------
+  if (bgImage) drawImageCover(ctx, bgImage, 0, 0, W, H);
+  else { ctx.fillStyle = "#4A1E2A"; ctx.fillRect(0, 0, W, H); }
+
+  if (templateId === "citacao") {
+    const grad = ctx.createLinearGradient(0, 0, 0, H);
+    grad.addColorStop(0, "rgba(20,10,14,0.45)");
+    grad.addColorStop(0.5, "rgba(20,10,14,0.3)");
+    grad.addColorStop(1, "rgba(20,10,14,0.62)");
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, W, H);
+
+    ctx.textAlign = "center";
+    let y = H / 2 - 60;
+    ctx.fillStyle = "#F2A93B";
+    ctx.fillRect(W / 2 - 45, y, 90, 4);
+    y += 70;
+
+    ctx.fillStyle = "#FBF4EC";
+    ctx.font = "700 58px sans-serif";
+    wrapCanvasText(ctx, slide.headline, W - 200).forEach((line) => {
+      ctx.fillText(line, W / 2, y);
+      y += 66;
+    });
+    y += 14;
+
+    if (slide.subheadline) {
+      ctx.fillStyle = "#E6D6C7";
+      ctx.font = "400 32px sans-serif";
+      wrapCanvasText(ctx, slide.subheadline, W - 260).forEach((line) => {
+        ctx.fillText(line, W / 2, y);
+        y += 42;
+      });
+    }
+
+    ctx.fillStyle = "rgba(255,255,255,0.85)";
+    ctx.font = "600 24px sans-serif";
+    ctx.fillText("Opticalia Felgueiras", W / 2, H - 60);
+    ctx.textAlign = "left";
+    return;
+  }
+
+  // EDITORIAL (por omissão)
+  const grad = ctx.createLinearGradient(0, H * 0.32, 0, H);
+  grad.addColorStop(0, "rgba(20,10,14,0)");
+  grad.addColorStop(1, "rgba(20,10,14,0.82)");
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, H * 0.32, W, H * 0.68);
+
+  const padX = 64;
+
+  if (slide.number) {
+    ctx.fillStyle = "#F2A93B";
+    ctx.font = "700 50px sans-serif";
+    ctx.fillText(slide.number, padX, 130);
+    ctx.fillRect(padX, 148, 90, 5);
+  }
+
+  let y = Math.round(H * 0.66);
+  ctx.fillStyle = "#FBF4EC";
+  ctx.font = "800 60px sans-serif";
+  wrapCanvasText(ctx, (slide.headline || "").toUpperCase(), W - padX * 2).forEach((line) => {
+    ctx.fillText(line, padX, y);
+    y += 66;
+  });
+  y += 10;
+
+  if (slide.subheadline) {
+    ctx.fillStyle = "#E6D6C7";
+    ctx.font = "400 30px sans-serif";
+    wrapCanvasText(ctx, slide.subheadline, W - padX * 2).forEach((line) => {
+      ctx.fillText(line, padX, y);
+      y += 38;
+    });
+    y += 12;
+  }
+
+  (slide.bullets || []).forEach((b) => {
+    ctx.beginPath();
+    ctx.fillStyle = "#F2A93B";
+    ctx.arc(padX + 9, y - 10, 9, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = "#FBF4EC";
+    ctx.font = "600 28px sans-serif";
+    ctx.fillText(b, padX + 30, y);
+    y += 44;
+  });
+
+  ctx.fillStyle = "rgba(255,255,255,0.85)";
+  ctx.font = "600 24px sans-serif";
+  ctx.textAlign = "right";
+  ctx.fillText("Opticalia Felgueiras", W - 40, H - 36);
+  ctx.textAlign = "left";
+}
+
+function SlideCanvas({ slide, templateId, imageUrl }) {
+  const canvasRef = useRef(null);
+  const [ready, setReady] = useState(false);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    setReady(false);
+
+    if (!imageUrl) {
+      const ctx = canvas.getContext("2d");
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.fillStyle = "#E6D6C7";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.fillStyle = "#8C7A6E";
+      ctx.font = "500 26px sans-serif";
+      ctx.textAlign = "center";
+      ctx.fillText("Escolhe uma foto para este slide", canvas.width / 2, canvas.height / 2);
+      ctx.textAlign = "left";
+      return;
+    }
+
+    const img = new window.Image();
+    img.crossOrigin = "anonymous";
+    img.onload = () => { drawCarouselSlide(canvas, slide, templateId, img); setReady(true); };
+    img.onerror = () => { drawCarouselSlide(canvas, slide, templateId, null); setReady(true); };
+    img.src = imageUrl;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [imageUrl, templateId, slide.headline, slide.subheadline, slide.number, JSON.stringify(slide.bullets)]);
+
+  function download() {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const link = document.createElement("a");
+    link.download = `opticalia-carrossel-${slide.number || "final"}.png`;
+    link.href = canvas.toDataURL("image/png");
+    link.click();
+  }
+
+  return (
+    <div className="rounded-lg overflow-hidden mb-2" style={{ border: "1px solid #E6D6C7" }}>
+      <canvas
+        ref={canvasRef}
+        width={CAROUSEL_W}
+        height={CAROUSEL_H}
+        className="w-full block"
+        style={{ aspectRatio: `${CAROUSEL_W}/${CAROUSEL_H}` }}
+      />
+      {imageUrl && (
+        <button
+          onClick={download}
+          disabled={!ready}
+          className="w-full text-xs font-medium py-2"
+          style={{ background: "#4A1E2A", color: "#FBF4EC", opacity: ready ? 1 : 0.6 }}
+        >
+          Descarregar PNG
+        </button>
+      )}
+    </div>
+  );
+}
+
+function CarouselGenerator() {
+  const [topic, setTopic] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [slides, setSlides] = useState([]);
+  const [templateId, setTemplateId] = useState("editorial");
+  const [error, setError] = useState("");
+  const [pickerFor, setPickerFor] = useState(null);
+
+  async function generate() {
+    if (!topic.trim()) return;
+    setLoading(true);
+    setError("");
+    setSlides([]);
+    try {
+      const res = await apiCarouselGenerate(topic.trim());
+      if (!res.ok) {
+        setError(res.error || "Não consegui gerar o carrossel.");
+        setLoading(false);
+        return;
+      }
+      setSlides(res.slides.map((s) => ({ ...s, image: null })));
+    } catch (err) {
+      setError("Erro ao gerar: " + (err?.message || String(err)));
+    }
+    setLoading(false);
+  }
+
+  function setSlideImage(id, image) {
+    setSlides((sl) => sl.map((s) => (s.id === id ? { ...s, image } : s)));
+    setPickerFor(null);
+  }
+
+  return (
+    <div>
+      <h2 style={{ fontFamily: "Fraunces, serif", color: "#4A1E2A" }} className="text-xl mb-1">
+        Carrossel
+      </h2>
+      <p style={{ color: "#8C7A6E" }} className="text-sm mb-6">
+        A IA escreve o guião de slides (decide quantos fazem sentido para o tema), tu escolhes as fotos e descarregas cada imagem pronta a publicar.
+      </p>
+
+      {slides.length === 0 && (
+        <div className="rounded-xl p-5 mb-4" style={{ background: "#fff", border: "1px solid #E6D6C7" }}>
+          <label style={{ color: "#8C7A6E" }} className="text-xs block mb-2">
+            Sobre que tema é o carrossel?
+          </label>
+          <textarea
+            value={topic}
+            onChange={(e) => setTopic(e.target.value)}
+            rows={2}
+            className="w-full p-3 rounded-lg text-sm outline-none resize-none"
+            style={{ background: "#FBF4EC", border: "1px solid #E6D6C7", color: "#4A1E2A" }}
+            placeholder="Ex: tendências de armações para 2026, como escolher a lente certa, mitos sobre óculos de sol..."
+          />
+          <button
+            onClick={generate}
+            disabled={loading || !topic.trim()}
+            className="mt-3 px-4 py-2.5 rounded-lg text-sm font-medium flex items-center gap-2"
+            style={{ background: "#4A1E2A", color: "#FBF4EC", opacity: loading ? 0.7 : 1 }}
+          >
+            {loading ? <Loader2 size={15} className="animate-spin" /> : <Sparkles size={15} />}
+            {loading ? "A escrever o guião..." : "Gerar guião do carrossel"}
+          </button>
+          {error && (
+            <div className="flex items-center gap-2 text-sm mt-3" style={{ color: "#C24444" }}>
+              <AlertCircle size={14} /> {error}
+            </div>
+          )}
+        </div>
+      )}
+
+      {slides.length > 0 && (
+        <div>
+          <button
+            onClick={() => { setSlides([]); setTopic(""); setError(""); }}
+            className="text-sm mb-4 flex items-center gap-1"
+            style={{ color: "#8C7A6E" }}
+          >
+            ← Começar outro carrossel
+          </button>
+
+          <div className="mb-5">
+            <div style={{ color: "#8C7A6E" }} className="text-xs mb-2">
+              Estilo visual (aplica-se a todos os slides)
+            </div>
+            <div className="flex gap-2 flex-wrap">
+              {CAROUSEL_TEMPLATES.map((t) => (
+                <button
+                  key={t.id}
+                  onClick={() => setTemplateId(t.id)}
+                  className="text-xs px-3 py-1.5 rounded-full"
+                  style={{
+                    background: templateId === t.id ? "#4A1E2A" : "#fff",
+                    color: templateId === t.id ? "#FBF4EC" : "#8C7A6E",
+                    border: "1px solid #E6D6C7",
+                  }}
+                >
+                  {t.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            {slides.map((slide) => (
+              <div key={slide.id} className="rounded-xl p-3" style={{ background: "#fff", border: "1px solid #E6D6C7" }}>
+                <SlideCanvas slide={slide} templateId={templateId} imageUrl={slide.image?.url || null} />
+                <div className="flex items-center justify-between mt-1">
+                  <span style={{ color: "#B0A196" }} className="text-[11px]">
+                    {slide.number ? `Slide ${slide.number}` : "Slide final (CTA)"}
+                  </span>
+                  <button
+                    onClick={() => setPickerFor(pickerFor === slide.id ? null : slide.id)}
+                    className="text-xs font-medium flex items-center gap-1"
+                    style={{ color: "#8B3A4B" }}
+                  >
+                    <ImageIcon size={12} /> {slide.image ? "Trocar foto" : "Escolher foto"}
+                  </button>
+                </div>
+                {pickerFor === slide.id && (
+                  <div className="mt-3 p-3 rounded-lg" style={{ background: "#FBF4EC", border: "1px solid #E6D6C7" }}>
+                    <ImageLibrary onSelect={(img) => setSlideImage(slide.id, img)} />
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ---------------------------------------------------------
    APP
 --------------------------------------------------------- */
 export default function OpticApp() {
@@ -1328,6 +1741,7 @@ export default function OpticApp() {
             { id: "dashboard", label: "Início", icon: Eye },
             { id: "gerar", label: "Gerar conteúdo", icon: Sparkles },
             { id: "video", label: "Vídeo", icon: Video },
+            { id: "carrossel", label: "Carrossel", icon: LayoutGrid },
             { id: "imagens", label: "Imagens", icon: ImageIcon },
             { id: "biblioteca", label: "Biblioteca", icon: Layers },
             { id: "definicoes", label: "Definições", icon: SettingsIcon },
@@ -1370,6 +1784,7 @@ export default function OpticApp() {
             />
           )}
           {tab === "video" && <VideoGenerator />}
+          {tab === "carrossel" && <CarouselGenerator />}
           {tab === "biblioteca" && <Library refreshKey={refreshKey} />}
           {tab === "imagens" && <ImageLibrary />}
           {tab === "definicoes" && <SettingsPanel />}
