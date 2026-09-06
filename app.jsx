@@ -148,6 +148,14 @@ async function apiCarouselGenerate(topic) {
   });
   return res.json();
 }
+async function apiCarouselAdjust(payload) {
+  const res = await fetch("/.netlify/functions/carousel-slide-adjust", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  return res.json();
+}
 function resizeImageFile(file, maxDim = 1024) {
   return new Promise((resolve, reject) => {
     const img = new window.Image();
@@ -1584,6 +1592,35 @@ function CarouselGenerator({ user }) {
   const [editingFor, setEditingFor] = useState(null);
   const [savingDraft, setSavingDraft] = useState(false);
   const [saveMsg, setSaveMsg] = useState("");
+  const [adjustingFor, setAdjustingFor] = useState(null);
+
+  async function adjustTextToPhoto(slide) {
+    if (!slide.image?.url) return;
+    setAdjustingFor(slide.id);
+    setError("");
+    try {
+      const data = await apiCarouselAdjust({
+        imageUrl: slide.image.url,
+        topic,
+        headline: slide.headline,
+        subheadline: slide.subheadline,
+        bullets: slide.bullets,
+        isCta: slide.isCta,
+      });
+      if (!data.ok) {
+        setError(data.error || "Não consegui ajustar o texto a esta foto.");
+      } else {
+        setSlides((sl) => sl.map((s) => (
+          s.id === slide.id
+            ? { ...s, headline: data.headline, subheadline: data.subheadline, bullets: data.bullets || [] }
+            : s
+        )));
+      }
+    } catch (err) {
+      setError("Erro ao ajustar o texto: " + (err?.message || String(err)));
+    }
+    setAdjustingFor(null);
+  }
 
   async function saveDraft() {
     if (!slides.length) return;
@@ -1728,6 +1765,12 @@ function CarouselGenerator({ user }) {
             Isto guarda o texto do carrossel (para a equipa acompanhar). As imagens de cada slide guardam-se individualmente com o botão "Guardar imagem".
           </p>
 
+          {error && (
+            <div className="flex items-center gap-2 text-sm mb-4" style={{ color: "#C24444" }}>
+              <AlertCircle size={14} /> {error}
+            </div>
+          )}
+
           <div className="mb-5">
             <div style={{ color: "#8C7A6E" }} className="text-xs mb-2">
               Estilo visual (aplica-se a todos os slides)
@@ -1773,6 +1816,19 @@ function CarouselGenerator({ user }) {
                     >
                       <ImageIcon size={12} /> {slide.image ? "Trocar foto" : "Escolher foto"}
                     </button>
+                    {slide.image && (
+                      <button
+                        onClick={() => adjustTextToPhoto(slide)}
+                        disabled={adjustingFor === slide.id}
+                        className="text-xs font-medium flex items-center gap-1"
+                        style={{ color: "#8B3A4B", opacity: adjustingFor === slide.id ? 0.6 : 1 }}
+                      >
+                        {adjustingFor === slide.id
+                          ? <Loader2 size={12} className="animate-spin" />
+                          : <Sparkles size={12} />}
+                        {adjustingFor === slide.id ? "A ajustar..." : "Ajustar texto à foto"}
+                      </button>
+                    )}
                   </div>
                 </div>
 
