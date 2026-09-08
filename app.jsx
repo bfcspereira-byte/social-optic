@@ -714,15 +714,19 @@ Responde APENAS com um objeto JSON, sem markdown, sem texto antes ou depois, no 
 /* ---------------------------------------------------------
    BIBLIOTECA
 --------------------------------------------------------- */
-function Library({ refreshKey }) {
+function Library({ refreshKey, initialFilter = "todos" }) {
   const [posts, setPosts] = useState([]);
-  const [filter, setFilter] = useState("todos");
+  const [filter, setFilter] = useState(initialFilter);
   const [loading, setLoading] = useState(true);
   const [copiedId, setCopiedId] = useState(null);
 
   useEffect(() => {
     load();
   }, [refreshKey]);
+
+  useEffect(() => {
+    setFilter(initialFilter);
+  }, [initialFilter]);
 
   async function load() {
     setLoading(true);
@@ -891,16 +895,21 @@ function Dashboard({ user, onCreate, onOpenCategory, refreshKey, onOpenLibrary }
       <div style={{ color: "#4A1E2A" }} className="text-sm font-medium mb-3">Esta semana</div>
       <div className="grid grid-cols-3 gap-3 mb-6">
         {[
-          { label: "Publicações", value: publicados },
-          { label: "Prontas", value: prontos },
-          { label: "Rascunhos", value: rascunhos },
+          { label: "Publicações", value: publicados, status: "publicado" },
+          { label: "Prontas", value: prontos, status: "pronto" },
+          { label: "Rascunhos", value: rascunhos, status: "rascunho" },
         ].map((s) => (
-          <div key={s.label} className="rounded-2xl p-4" style={{ background: "#FBF4EC" }}>
+          <button
+            key={s.label}
+            onClick={() => onOpenLibrary(s.status)}
+            className="rounded-2xl p-4 text-left"
+            style={{ background: "#FBF4EC" }}
+          >
             <div style={{ fontFamily: "Fraunces, serif", color: "#4A1E2A" }} className="text-3xl mb-1">
               {s.value}
             </div>
             <div style={{ color: "#8C7A6E" }} className="text-xs">{s.label}</div>
-          </div>
+          </button>
         ))}
       </div>
 
@@ -929,7 +938,7 @@ function Dashboard({ user, onCreate, onOpenCategory, refreshKey, onOpenLibrary }
             </div>
             <p style={{ color: "#4A1E2A" }} className="text-sm mb-3 line-clamp-2">{proxima.legenda}</p>
             <button
-              onClick={onOpenLibrary}
+              onClick={() => onOpenLibrary()}
               className="text-xs font-medium"
               style={{ color: "#8B3A4B" }}
             >
@@ -1900,6 +1909,7 @@ export default function OpticApp() {
   const [user, setUser] = useState(null);
   const [tab, setTab] = useState("dashboard");
   const [refreshKey, setRefreshKey] = useState(0);
+  const [libraryFilter, setLibraryFilter] = useState("todos");
   const [presetCategory, setPresetCategory] = useState(null);
   const [generatorSeed, setGeneratorSeed] = useState(0);
 
@@ -1986,7 +1996,7 @@ export default function OpticApp() {
               refreshKey={refreshKey}
               onCreate={() => goToGenerator(null)}
               onOpenCategory={(id) => goToGenerator(id)}
-              onOpenLibrary={() => { setTab("biblioteca"); setRefreshKey((k) => k + 1); }}
+              onOpenLibrary={(status) => { setLibraryFilter(status || "todos"); setTab("biblioteca"); setRefreshKey((k) => k + 1); }}
             />
           )}
           {tab === "gerar" && (
@@ -1999,7 +2009,7 @@ export default function OpticApp() {
           )}
           {tab === "video" && <VideoGenerator />}
           {tab === "carrossel" && <CarouselGenerator user={user} />}
-          {tab === "biblioteca" && <Library refreshKey={refreshKey} />}
+          {tab === "biblioteca" && <Library refreshKey={refreshKey} initialFilter={libraryFilter} />}
           {tab === "imagens" && <ImageLibrary />}
           {tab === "definicoes" && <SettingsPanel />}
         </main>
