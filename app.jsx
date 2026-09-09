@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import {
   Eye, Lock, Mail, User, LogOut, Sparkles, RefreshCw, Image as ImageIcon,
-  Video, Check, X, Copy, ChevronRight, Glasses, Sun, Wrench, Shirt,
+  Video, Check, X, Copy, ChevronRight, ChevronDown, Glasses, Sun, Wrench, Shirt,
   Layers, Loader2, AlertCircle, Plus, Trash2, Settings as SettingsIcon, LayoutGrid, Pencil
 } from "lucide-react";
 
@@ -96,6 +96,14 @@ async function apiUpdatePostStatus(id, status) {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ id, status }),
+  });
+  return res.json();
+}
+async function apiUpdatePost(id, fields) {
+  const res = await fetch("/.netlify/functions/posts", {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ id, ...fields }),
   });
   return res.json();
 }
@@ -719,6 +727,10 @@ function Library({ refreshKey, initialFilter = "todos" }) {
   const [filter, setFilter] = useState(initialFilter);
   const [loading, setLoading] = useState(true);
   const [copiedId, setCopiedId] = useState(null);
+  const [openId, setOpenId] = useState(null);
+  const [editingId, setEditingId] = useState(null);
+  const [editDraft, setEditDraft] = useState(null);
+  const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     load();
@@ -753,6 +765,48 @@ function Library({ refreshKey, initialFilter = "todos" }) {
     navigator.clipboard?.writeText(text);
     setCopiedId(post.id);
     setTimeout(() => setCopiedId(null), 1500);
+  }
+
+  function toggleOpen(post) {
+    if (editingId === post.id) return; // não fechar se estiver a editar
+    setOpenId(openId === post.id ? null : post.id);
+  }
+
+  function startEdit(post) {
+    setOpenId(post.id);
+    setEditingId(post.id);
+    setEditDraft({
+      titulo_interno: post.titulo_interno || "",
+      legenda: post.legenda || "",
+      hashtagsText: (post.hashtags || []).join(", "),
+    });
+  }
+
+  function cancelEdit() {
+    setEditingId(null);
+    setEditDraft(null);
+  }
+
+  async function saveEdit(post) {
+    if (!editDraft) return;
+    setSaving(true);
+    try {
+      const hashtags = editDraft.hashtagsText
+        .split(",")
+        .map((h) => h.trim())
+        .filter(Boolean);
+      await apiUpdatePost(post.id, {
+        titulo_interno: editDraft.titulo_interno,
+        legenda: editDraft.legenda,
+        hashtags,
+      });
+      setEditingId(null);
+      setEditDraft(null);
+      await load();
+    } catch {
+      // silencioso — o utilizador pode tentar novamente
+    }
+    setSaving(false);
   }
 
   const filtered = filter === "todos" ? posts : posts.filter((p) => p.status === filter);
@@ -799,38 +853,118 @@ function Library({ refreshKey, initialFilter = "todos" }) {
       <div className="space-y-3">
         {filtered.map((post) => {
           const cat = CATEGORIES.find((c) => c.id === post.category);
+          const isOpen = openId === post.id;
+          const isEditing = editingId === post.id;
           return (
             <div key={post.id} className="rounded-xl p-4" style={{ background: "#fff", border: "1px solid #E6D6C7" }}>
-              <div className="flex items-start justify-between mb-2">
+              <div
+                className="flex items-start justify-between mb-2 cursor-pointer"
+                onClick={() => toggleOpen(post)}
+              >
                 <div className="flex items-center gap-2">
                   {cat && <cat.icon size={14} color="#8B3A4B" />}
                   <span style={{ color: "#4A1E2A" }} className="text-sm font-medium">{post.titulo_interno}</span>
                 </div>
-                <span
-                  className="text-[11px] px-2 py-0.5 rounded-full shrink-0"
-                  style={{ background: statusColor[post.status] + "20", color: statusColor[post.status] }}
-                >
-                  {statusLabel[post.status]}
-                </span>
+                <div className="flex items-center gap-2 shrink-0">
+                  <span
+                    className="text-[11px] px-2 py-0.5 rounded-full"
+                    style={{ background: statusColor[post.status] + "20", color: statusColor[post.status] }}
+                  >
+                    {statusLabel[post.status]}
+                  </span>
+                  <ChevronDown
+                    size={14}
+                    color="#B0A196"
+                    style={{ transform: isOpen ? "rotate(180deg)" : "none", transition: "transform 0.15s" }}
+                  />
+                </div>
               </div>
-              <p style={{ color: "#8C7A6E" }} className="text-sm mb-3 line-clamp-2">{post.legenda}</p>
+
+              {!isOpen && (
+                <p
+                  onClick={() => toggleOpen(post)}
+                  style={{ color: "#8C7A6E" }}
+                  className="text-sm mb-3 line-clamp-2 cursor-pointer"
+                >
+                  {post.legenda}
+                </p>
+              )}
+
+              {isOpen && !isEditing && (
+                <div className="mb-3">
+                  <p style={{ color: "#8C7A6E", whiteSpace: "pre-wrap" }} className="text-sm mb-2">{post.legenda}</p>
+                  {(post.hashtags || []).length > 0 && (
+                    <p style={{ color: "#B0A196" }} className="text-xs">{post.hashtags.join(" ")}</p>
+                  )}
+                </div>
+              )}
+
+              {isOpen && isEditing && editDraft && (
+                <div className="mb-3 space-y-2" onClick={(e) => e.stopPropagation()}>
+                  <input
+                    value={editDraft.titulo_interno}
+                    onChange={(e) => setEditDraft({ ...editDraft, titulo_interno: e.target.value })}
+                    className="w-full text-sm rounded-lg px-3 py-2"
+                    style={{ border: "1px solid #E6D6C7", color: "#4A1E2A" }}
+                    placeholder="Título interno"
+                  />
+                  <textarea
+                    value={editDraft.legenda}
+                    onChange={(e) => setEditDraft({ ...editDraft, legenda: e.target.value })}
+                    rows={5}
+                    className="w-full text-sm rounded-lg px-3 py-2"
+                    style={{ border: "1px solid #E6D6C7", color: "#4A1E2A" }}
+                    placeholder="Legenda"
+                  />
+                  <input
+                    value={editDraft.hashtagsText}
+                    onChange={(e) => setEditDraft({ ...editDraft, hashtagsText: e.target.value })}
+                    className="w-full text-sm rounded-lg px-3 py-2"
+                    style={{ border: "1px solid #E6D6C7", color: "#4A1E2A" }}
+                    placeholder="Hashtags separadas por vírgula"
+                  />
+                  <div className="flex items-center gap-3">
+                    <button
+                      onClick={() => saveEdit(post)}
+                      disabled={saving}
+                      className="text-xs font-medium px-3 py-1.5 rounded-full"
+                      style={{ background: "#4A1E2A", color: "#FBF4EC", opacity: saving ? 0.6 : 1 }}
+                    >
+                      {saving ? "A guardar..." : "Guardar"}
+                    </button>
+                    <button onClick={cancelEdit} className="text-xs" style={{ color: "#8C7A6E" }}>
+                      Cancelar
+                    </button>
+                  </div>
+                </div>
+              )}
+
               <div className="flex items-center justify-between">
                 <span style={{ color: "#B0A196" }} className="text-[11px]">
                   {post.author} · {new Date(post.createdAt).toLocaleDateString("pt-PT")}
                 </span>
-                <div className="flex items-center gap-3">
-                  <button onClick={() => copyCaption(post)} className="text-xs flex items-center gap-1" style={{ color: "#8B3A4B" }}>
-                    <Copy size={12} /> {copiedId === post.id ? "Copiado" : "Copiar texto"}
-                  </button>
-                  {post.status !== "publicado" && (
-                    <button onClick={() => markPublished(post)} className="text-xs flex items-center gap-1" style={{ color: "#5F7350" }}>
-                      <Check size={12} /> Marcar publicado
+                {!isEditing && (
+                  <div className="flex items-center gap-3">
+                    <button
+                      onClick={(e) => { e.stopPropagation(); startEdit(post); }}
+                      className="text-xs flex items-center gap-1"
+                      style={{ color: "#8B3A4B" }}
+                    >
+                      <Pencil size={12} /> Editar
                     </button>
-                  )}
-                  <button onClick={() => remove(post)} className="text-xs" style={{ color: "#C24444" }}>
-                    <Trash2 size={12} />
-                  </button>
-                </div>
+                    <button onClick={(e) => { e.stopPropagation(); copyCaption(post); }} className="text-xs flex items-center gap-1" style={{ color: "#8B3A4B" }}>
+                      <Copy size={12} /> {copiedId === post.id ? "Copiado" : "Copiar texto"}
+                    </button>
+                    {post.status !== "publicado" && (
+                      <button onClick={(e) => { e.stopPropagation(); markPublished(post); }} className="text-xs flex items-center gap-1" style={{ color: "#5F7350" }}>
+                        <Check size={12} /> Marcar publicado
+                      </button>
+                    )}
+                    <button onClick={(e) => { e.stopPropagation(); remove(post); }} className="text-xs" style={{ color: "#C24444" }}>
+                      <Trash2 size={12} />
+                    </button>
+                  </div>
+                )}
               </div>
             </div>
           );
