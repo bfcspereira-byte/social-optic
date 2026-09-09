@@ -722,7 +722,7 @@ Responde APENAS com um objeto JSON, sem markdown, sem texto antes ou depois, no 
 /* ---------------------------------------------------------
    BIBLIOTECA
 --------------------------------------------------------- */
-function Library({ refreshKey, initialFilter = "todos" }) {
+function Library({ refreshKey, initialFilter = "todos", onResumeCarousel }) {
   const [posts, setPosts] = useState([]);
   const [filter, setFilter] = useState(initialFilter);
   const [loading, setLoading] = useState(true);
@@ -945,6 +945,15 @@ function Library({ refreshKey, initialFilter = "todos" }) {
                 </span>
                 {!isEditing && (
                   <div className="flex items-center gap-3">
+                    {post.category === "carrossel" && post.carouselData && onResumeCarousel && (
+                      <button
+                        onClick={(e) => { e.stopPropagation(); onResumeCarousel(post); }}
+                        className="text-xs flex items-center gap-1"
+                        style={{ color: "#5F7350" }}
+                      >
+                        <LayoutGrid size={12} /> Continuar carrossel
+                      </button>
+                    )}
                     <button
                       onClick={(e) => { e.stopPropagation(); startEdit(post); }}
                       className="text-xs flex items-center gap-1"
@@ -1725,11 +1734,12 @@ function SlideCanvas({ slide, templateId, imageUrl }) {
   );
 }
 
-function CarouselGenerator({ user }) {
-  const [topic, setTopic] = useState("");
+function CarouselGenerator({ user, resumeData }) {
+  const [topic, setTopic] = useState(resumeData?.carouselData?.topic || "");
   const [loading, setLoading] = useState(false);
-  const [slides, setSlides] = useState([]);
-  const [templateId, setTemplateId] = useState("editorial");
+  const [slides, setSlides] = useState(resumeData?.carouselData?.slides || []);
+  const [templateId, setTemplateId] = useState(resumeData?.carouselData?.templateId || "editorial");
+  const [postId, setPostId] = useState(resumeData?.id || null);
   const [error, setError] = useState("");
   const [pickerFor, setPickerFor] = useState(null);
   const [editingFor, setEditingFor] = useState(null);
@@ -1773,21 +1783,36 @@ function CarouselGenerator({ user }) {
       const legenda = slides
         .map((s) => `${s.number ? s.number + ". " : ""}${s.headline}${s.subheadline ? " — " + s.subheadline : ""}`)
         .join("\n");
-      const post = {
-        id: "post_" + Date.now(),
-        category: "carrossel",
-        status: "rascunho",
-        author: user?.name || "Equipa",
-        createdAt: new Date().toISOString(),
-        platform: { instagram: true, facebook: false },
-        titulo_interno: (topic || "Carrossel").slice(0, 60),
-        legenda,
-        hashtags: [],
-        sugestao_visual: `Carrossel de ${slides.length} slides (estilo "${CAROUSEL_TEMPLATES.find((t) => t.id === templateId)?.label}"). Volta ao separador Carrossel para escolher as fotos e guardar cada imagem.`,
-        cta: slides.find((s) => s.isCta)?.headline || "",
-      };
-      await apiSavePost(post);
-      setSaveMsg("Guião guardado na Biblioteca como rascunho.");
+      const carouselData = { topic, templateId, slides };
+      if (postId) {
+        await apiUpdatePost(postId, {
+          titulo_interno: (topic || "Carrossel").slice(0, 60),
+          legenda,
+          sugestao_visual: `Carrossel de ${slides.length} slides (estilo "${CAROUSEL_TEMPLATES.find((t) => t.id === templateId)?.label}").`,
+          cta: slides.find((s) => s.isCta)?.headline || "",
+          carouselData,
+        });
+        setSaveMsg("Guião atualizado na Biblioteca.");
+      } else {
+        const newId = "post_" + Date.now();
+        const post = {
+          id: newId,
+          category: "carrossel",
+          status: "rascunho",
+          author: user?.name || "Equipa",
+          createdAt: new Date().toISOString(),
+          platform: { instagram: true, facebook: false },
+          titulo_interno: (topic || "Carrossel").slice(0, 60),
+          legenda,
+          hashtags: [],
+          sugestao_visual: `Carrossel de ${slides.length} slides (estilo "${CAROUSEL_TEMPLATES.find((t) => t.id === templateId)?.label}").`,
+          cta: slides.find((s) => s.isCta)?.headline || "",
+          carouselData,
+        };
+        await apiSavePost(post);
+        setPostId(newId);
+        setSaveMsg("Guião guardado na Biblioteca como rascunho.");
+      }
     } catch (err) {
       setSaveMsg("Não consegui guardar: " + (err?.message || String(err)));
     }
@@ -1883,7 +1908,7 @@ function CarouselGenerator({ user }) {
       {slides.length > 0 && (
         <div>
           <button
-            onClick={() => { setSlides([]); setTopic(""); setError(""); }}
+            onClick={() => { setSlides([]); setTopic(""); setError(""); setPostId(null); }}
             className="text-sm mb-4 flex items-center gap-1"
             style={{ color: "#8C7A6E" }}
           >
@@ -1898,14 +1923,14 @@ function CarouselGenerator({ user }) {
               style={{ background: "#F3E3D3", color: "#6B2A3D" }}
             >
               {savingDraft ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />}
-              {savingDraft ? "A guardar..." : "Guardar guião na biblioteca"}
+              {savingDraft ? "A guardar..." : postId ? "Atualizar guião na biblioteca" : "Guardar guião na biblioteca"}
             </button>
             {saveMsg && (
               <span style={{ color: "#5F7350" }} className="text-xs">{saveMsg}</span>
             )}
           </div>
           <p style={{ color: "#B0A196" }} className="text-[11px] -mt-3 mb-5">
-            Isto guarda o texto do carrossel (para a equipa acompanhar). As imagens de cada slide guardam-se individualmente com o botão "Guardar imagem".
+            Isto guarda o progresso todo (texto e fotos escolhidas) — podes voltar à Biblioteca mais tarde e continuar este carrossel de onde ficaste.
           </p>
 
           {error && (
@@ -2044,6 +2069,7 @@ export default function OpticApp() {
   const [tab, setTab] = useState("dashboard");
   const [refreshKey, setRefreshKey] = useState(0);
   const [libraryFilter, setLibraryFilter] = useState("todos");
+  const [resumeCarousel, setResumeCarousel] = useState(null);
   const [presetCategory, setPresetCategory] = useState(null);
   const [generatorSeed, setGeneratorSeed] = useState(0);
 
@@ -2109,6 +2135,7 @@ export default function OpticApp() {
               onClick={() => {
                 if (t.id === "gerar") goToGenerator(null);
                 else setTab(t.id);
+                setResumeCarousel(null);
                 setRefreshKey((k) => k + 1);
               }}
               className="flex items-center gap-1.5 text-sm px-3.5 py-2 rounded-t-lg shrink-0"
@@ -2142,8 +2169,14 @@ export default function OpticApp() {
             />
           )}
           {tab === "video" && <VideoGenerator />}
-          {tab === "carrossel" && <CarouselGenerator user={user} />}
-          {tab === "biblioteca" && <Library refreshKey={refreshKey} initialFilter={libraryFilter} />}
+          {tab === "carrossel" && <CarouselGenerator user={user} resumeData={resumeCarousel} />}
+          {tab === "biblioteca" && (
+            <Library
+              refreshKey={refreshKey}
+              initialFilter={libraryFilter}
+              onResumeCarousel={(post) => { setResumeCarousel(post); setTab("carrossel"); }}
+            />
+          )}
           {tab === "imagens" && <ImageLibrary />}
           {tab === "definicoes" && <SettingsPanel />}
         </main>
