@@ -27,12 +27,12 @@ export default async (req) => {
     }
 
     if (req.method === "PATCH") {
-      const { id, status } = await req.json();
+      const { id, ...fields } = await req.json();
       const existing = await s.get(id, { type: "json" });
       if (!existing) {
         return new Response(JSON.stringify({ ok: false, error: "Post não encontrado" }), { status: 404 });
       }
-      const updated = { ...existing, status };
+      const updated = { ...existing, ...fields };
       await s.setJSON(id, updated);
       return new Response(JSON.stringify({ ok: true, post: updated }), { status: 200 });
     }
