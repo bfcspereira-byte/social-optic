@@ -24,3 +24,5 @@ chave de API da Anthropic através de uma função de servidor (Netlify
 Functions), porque uma chave de API nunca deve ficar exposta diretamente
 no código do site. Quando chegares a este passo, pede-me ajuda e preparo
 essa função contigo.
+
+
