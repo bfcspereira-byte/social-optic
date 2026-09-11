@@ -91,11 +91,11 @@ async function apiSavePost(post) {
   });
   return res.json();
 }
-async function apiGenerateFromPhoto(imageUrl, topic) {
+async function apiGenerateFromPhoto(imageUrl, topic, feedback, previousResult) {
   const res = await fetch("/.netlify/functions/generate-from-photo", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ imageUrl, topic }),
+    body: JSON.stringify({ imageUrl, topic, feedback, previousResult }),
   });
   return res.json();
 }
@@ -430,26 +430,33 @@ function LoginScreen({ onLogin }) {
 /* ---------------------------------------------------------
    GERADOR DE CONTEÚDO
 --------------------------------------------------------- */
-function Generator({ user, onSaved, initialCategory }) {
+function Generator({ user, onSaved, initialCategory, initialDetail }) {
   const [category, setCategory] = useState(initialCategory || null);
-  const [detail, setDetail] = useState("");
+  const [detail, setDetail] = useState(initialDetail || "");
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState(null);
   const [error, setError] = useState("");
   const [media, setMedia] = useState([]);
   const [showLibraryPicker, setShowLibraryPicker] = useState(false);
   const [platform, setPlatform] = useState({ instagram: true, facebook: true });
+  const [feedback, setFeedback] = useState("");
   const fileRef = useRef(null);
 
-  async function generate() {
+  async function generate(refineFeedback) {
     setLoading(true);
     setError("");
-    setResult(null);
+    if (!refineFeedback) setResult(null);
     try {
       const prompt = `Es um especialista em marketing de redes sociais para óticas em Portugal. Escreves para a "Opticalia Felgueiras", uma ótica local, com tom próximo, claro e de confiança — sem exageros de vendedor.
 
 ${CATEGORY_PROMPTS[category]}
 ${detail ? `Detalhe pedido pelo lojista: ${detail}` : ""}
+${refineFeedback && result ? `
+Já tinhas escrito esta versão:
+${JSON.stringify({ titulo_interno: result.titulo_interno, legenda: result.legenda, hashtags: result.hashtags, sugestao_visual: result.sugestao_visual, cta: result.cta })}
+
+O lojista pediu esta alteração: "${refineFeedback}"
+Reescreve tendo em conta este pedido, mantendo o resto fiel ao briefing original.` : ""}
 
 Responde APENAS com um objeto JSON, sem markdown, sem texto antes ou depois, no formato:
 {
@@ -462,6 +469,7 @@ Responde APENAS com um objeto JSON, sem markdown, sem texto antes ou depois, no 
       const text = await callClaude(prompt);
       const json = extractJson(text);
       setResult(json);
+      setFeedback("");
     } catch (err) {
       setError("Não consegui gerar o conteúdo agora. Detalhe técnico: " + (err?.message || String(err)));
     }
@@ -501,6 +509,7 @@ Responde APENAS com um objeto JSON, sem markdown, sem texto antes ou depois, no 
     setCategory(null);
     setDetail("");
     setMedia([]);
+    setFeedback("");
   }
 
   if (!category) {
@@ -549,7 +558,7 @@ Responde APENAS com um objeto JSON, sem markdown, sem texto antes ou depois, no 
   return (
     <div>
       <button
-        onClick={() => { setCategory(null); setResult(null); setError(""); }}
+        onClick={() => { setCategory(null); setResult(null); setError(""); setFeedback(""); }}
         className="text-sm mb-5 flex items-center gap-1"
         style={{ color: "#8C7A6E" }}
       >
@@ -599,13 +608,6 @@ Responde APENAS com um objeto JSON, sem markdown, sem texto antes ou depois, no 
             <span style={{ color: "#B0A196" }} className="text-xs uppercase tracking-wide">
               {result.titulo_interno}
             </span>
-            <button
-              onClick={generate}
-              className="text-xs flex items-center gap-1"
-              style={{ color: "#8B3A4B" }}
-            >
-              <RefreshCw size={12} /> Gerar outra versão
-            </button>
           </div>
 
           <div className="mb-4">
@@ -641,6 +643,29 @@ Responde APENAS com um objeto JSON, sem markdown, sem texto antes ou depois, no 
           <div className="mb-5">
             <div style={{ color: "#8C7A6E" }} className="text-xs mb-1.5">Chamada à ação</div>
             <div className="text-sm font-medium" style={{ color: "#6B2A3D" }}>{result.cta}</div>
+          </div>
+
+          <div className="mb-5 pt-4" style={{ borderTop: "1px solid #EBDCCC" }}>
+            <label style={{ color: "#8C7A6E" }} className="text-xs block mb-1.5">
+              O que queres mudar? (opcional)
+            </label>
+            <textarea
+              value={feedback}
+              onChange={(e) => setFeedback(e.target.value)}
+              rows={2}
+              className="w-full p-3 rounded-lg text-sm outline-none resize-none mb-2"
+              style={{ background: "#FBF4EC", border: "1px solid #E6D6C7", color: "#4A1E2A" }}
+              placeholder="Ex: mais curto, tom mais informal, realçar a promoção..."
+            />
+            <button
+              onClick={() => generate(feedback)}
+              disabled={loading}
+              className="text-xs font-medium px-3 py-1.5 rounded-full flex items-center gap-1.5"
+              style={{ background: "#F3E3D3", color: "#6B2A3D", opacity: loading ? 0.7 : 1 }}
+            >
+              {loading ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
+              {loading ? "A gerar..." : feedback ? "Aplicar alteração" : "Gerar outra versão"}
+            </button>
           </div>
 
           <div className="mb-5 pt-4" style={{ borderTop: "1px solid #EBDCCC" }}>
@@ -737,16 +762,18 @@ function PhotoContentGenerator({ user, onSaved }) {
   const [result, setResult] = useState(null);
   const [error, setError] = useState("");
   const [platform, setPlatform] = useState({ instagram: true, facebook: true });
+  const [feedback, setFeedback] = useState("");
 
-  async function generate() {
+  async function generate(refineFeedback) {
     if (!photo) return;
     setLoading(true);
     setError("");
-    setResult(null);
+    if (!refineFeedback) setResult(null);
     try {
-      const res = await apiGenerateFromPhoto(photo.url, topic);
+      const res = await apiGenerateFromPhoto(photo.url, topic, refineFeedback, refineFeedback ? result : null);
       if (!res.ok) throw new Error(res.error || "Erro desconhecido");
       setResult(res);
+      setFeedback("");
     } catch (err) {
       setError("Não consegui gerar o texto agora. Detalhe técnico: " + (err?.message || String(err)));
     }
@@ -775,6 +802,7 @@ function PhotoContentGenerator({ user, onSaved }) {
     setPhoto(null);
     setTopic("");
     setResult(null);
+    setFeedback("");
   }
 
   return (
@@ -868,13 +896,6 @@ function PhotoContentGenerator({ user, onSaved }) {
             <span style={{ color: "#B0A196" }} className="text-xs uppercase tracking-wide">
               {result.titulo_interno}
             </span>
-            <button
-              onClick={generate}
-              className="text-xs flex items-center gap-1"
-              style={{ color: "#8B3A4B" }}
-            >
-              <RefreshCw size={12} /> Gerar outra versão
-            </button>
           </div>
 
           <div className="mb-4">
@@ -912,6 +933,29 @@ function PhotoContentGenerator({ user, onSaved }) {
           <div className="mb-5">
             <div style={{ color: "#8C7A6E" }} className="text-xs mb-1.5">Chamada à ação</div>
             <div className="text-sm font-medium" style={{ color: "#6B2A3D" }}>{result.cta}</div>
+          </div>
+
+          <div className="mb-5 pt-4" style={{ borderTop: "1px solid #EBDCCC" }}>
+            <label style={{ color: "#8C7A6E" }} className="text-xs block mb-1.5">
+              O que queres mudar? (opcional)
+            </label>
+            <textarea
+              value={feedback}
+              onChange={(e) => setFeedback(e.target.value)}
+              rows={2}
+              className="w-full p-3 rounded-lg text-sm outline-none resize-none mb-2"
+              style={{ background: "#FBF4EC", border: "1px solid #E6D6C7", color: "#4A1E2A" }}
+              placeholder="Ex: mais curto, realçar a cor da armação, tom mais divertido..."
+            />
+            <button
+              onClick={() => generate(feedback)}
+              disabled={loading}
+              className="text-xs font-medium px-3 py-1.5 rounded-full flex items-center gap-1.5"
+              style={{ background: "#F3E3D3", color: "#6B2A3D", opacity: loading ? 0.7 : 1 }}
+            >
+              {loading ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
+              {loading ? "A gerar..." : feedback ? "Aplicar alteração" : "Gerar outra versão"}
+            </button>
           </div>
 
           <div className="flex items-center gap-4 mb-5">
@@ -1226,6 +1270,11 @@ function Dashboard({ user, onCreate, onOpenCategory, refreshKey, onOpenLibrary }
     apiListPosts().then(setPosts).catch(() => setPosts([]));
   }, [refreshKey]);
 
+  useEffect(() => {
+    loadPlan();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   async function loadPlan() {
     setPlanLoading(true);
     setPlanError("");
@@ -1322,14 +1371,22 @@ function Dashboard({ user, onCreate, onOpenCategory, refreshKey, onOpenLibrary }
       )}
 
       <div className="flex items-center justify-between mb-3">
-        <div style={{ color: "#4A1E2A" }} className="text-sm font-medium">Plano de conteúdo (IA)</div>
-        <button onClick={loadPlan} disabled={planLoading} className="text-xs" style={{ color: "#8B3A4B" }}>
-          {planLoading ? "A analisar..." : plan ? "Atualizar" : "Gerar sugestões"}
+        <div>
+          <div style={{ color: "#4A1E2A" }} className="text-sm font-medium">O que publicar hoje</div>
+          <div style={{ color: "#B0A196" }} className="text-xs">Sugestões concretas, geradas pela IA a partir do teu histórico</div>
+        </div>
+        <button onClick={loadPlan} disabled={planLoading} className="text-xs shrink-0 ml-2" style={{ color: "#8B3A4B" }}>
+          {planLoading ? "A analisar..." : "Atualizar"}
         </button>
       </div>
       {planError && (
         <div className="flex items-start gap-2 text-sm mb-4" style={{ color: "#C24444" }}>
           <AlertCircle size={14} className="mt-0.5 shrink-0" /> {planError}
+        </div>
+      )}
+      {planLoading && !plan && (
+        <div className="flex items-center gap-2 text-sm mb-6" style={{ color: "#8C7A6E" }}>
+          <Loader2 size={14} className="animate-spin" /> A pensar no que publicar a seguir...
         </div>
       )}
       {plan && (
@@ -1339,7 +1396,7 @@ function Dashboard({ user, onCreate, onOpenCategory, refreshKey, onOpenLibrary }
             return (
               <button
                 key={i}
-                onClick={() => onOpenCategory(s.category)}
+                onClick={() => onOpenCategory(s.category, s.topic)}
                 className="w-full flex items-start gap-3 p-3.5 rounded-2xl text-left"
                 style={{ background: "#FBF4EC", border: "1px solid #F3E3D3" }}
               >
@@ -1349,52 +1406,18 @@ function Dashboard({ user, onCreate, onOpenCategory, refreshKey, onOpenLibrary }
                   </div>
                 )}
                 <div className="min-w-0">
-                  <div style={{ color: "#4A1E2A" }} className="text-sm font-medium">{s.label}</div>
-                  <div style={{ color: "#8C7A6E" }} className="text-xs">{s.reason}</div>
+                  <div style={{ color: "#4A1E2A" }} className="text-sm font-medium leading-snug">{s.topic || s.label}</div>
+                  <div style={{ color: "#8C7A6E" }} className="text-xs mt-0.5">{s.reason}</div>
                 </div>
               </button>
             );
           })}
         </div>
       )}
-      {!plan && !planLoading && !planError && (
-        <p style={{ color: "#B0A196" }} className="text-xs mb-6">
-          Toca em "Gerar sugestões" para a IA analisar o que já publicaste e recomendar os próximos 3 conteúdos.
-        </p>
-      )}
-
-      <div className="flex items-center justify-between mb-3">
-        <div style={{ color: "#4A1E2A" }} className="text-sm font-medium">Sugestões para hoje</div>
-      </div>
-      <div className="space-y-2">
-        {CATEGORIES.map((c) => {
-          const Icon = c.icon;
-          return (
-            <button
-              key={c.id}
-              onClick={() => onOpenCategory(c.id)}
-              className="w-full flex items-center gap-3 p-3.5 rounded-2xl text-left"
-              style={{ background: "#FBF4EC" }}
-            >
-              <div className="w-9 h-9 rounded-full flex items-center justify-center shrink-0" style={{ background: "#F3E3D3" }}>
-                <Icon size={16} color="#8B3A4B" strokeWidth={1.75} />
-              </div>
-              <div className="min-w-0">
-                <div style={{ color: "#4A1E2A" }} className="text-sm font-medium">{c.label}</div>
-                <div style={{ color: "#B0A196" }} className="text-xs truncate">{c.hint}</div>
-              </div>
-              <ChevronRight size={15} color="#B0A196" className="ml-auto shrink-0" />
-            </button>
-          );
-        })}
-      </div>
     </div>
   );
 }
 
-/* ---------------------------------------------------------
-   APP
---------------------------------------------------------- */
 /* ---------------------------------------------------------
    GERADOR DE VÍDEO
 --------------------------------------------------------- */
@@ -2301,10 +2324,12 @@ export default function OpticApp() {
   const [libraryFilter, setLibraryFilter] = useState("todos");
   const [resumeCarousel, setResumeCarousel] = useState(null);
   const [presetCategory, setPresetCategory] = useState(null);
+  const [presetDetail, setPresetDetail] = useState("");
   const [generatorSeed, setGeneratorSeed] = useState(0);
 
-  function goToGenerator(category) {
+  function goToGenerator(category, detail) {
     setPresetCategory(category || null);
+    setPresetDetail(detail || "");
     setGeneratorSeed((s) => s + 1);
     setTab("gerar");
   }
@@ -2387,7 +2412,7 @@ export default function OpticApp() {
               user={user}
               refreshKey={refreshKey}
               onCreate={() => goToGenerator(null)}
-              onOpenCategory={(id) => goToGenerator(id)}
+              onOpenCategory={(id, detail) => goToGenerator(id, detail)}
               onOpenLibrary={(status) => { setLibraryFilter(status || "todos"); setTab("biblioteca"); setRefreshKey((k) => k + 1); }}
             />
           )}
@@ -2396,6 +2421,7 @@ export default function OpticApp() {
               key={generatorSeed}
               user={user}
               initialCategory={presetCategory}
+              initialDetail={presetDetail}
               onSaved={() => { setTab("dashboard"); setRefreshKey((k) => k + 1); }}
             />
           )}
