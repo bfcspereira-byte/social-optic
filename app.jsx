@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from "react";
 import {
   Eye, Lock, Mail, User, LogOut, Sparkles, RefreshCw, Image as ImageIcon,
   Video, Check, X, Copy, ChevronRight, ChevronDown, Glasses, Sun, Wrench, Shirt,
-  Layers, Loader2, AlertCircle, Plus, Trash2, Settings as SettingsIcon, LayoutGrid, Pencil
+  Layers, Loader2, AlertCircle, Plus, Trash2, Settings as SettingsIcon, LayoutGrid, Pencil, Camera
 } from "lucide-react";
 
 /* ---------------------------------------------------------
@@ -88,6 +88,14 @@ async function apiSavePost(post) {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(post),
+  });
+  return res.json();
+}
+async function apiGenerateFromPhoto(imageUrl, topic) {
+  const res = await fetch("/.netlify/functions/generate-from-photo", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ imageUrl, topic }),
   });
   return res.json();
 }
@@ -682,6 +690,228 @@ Responde APENAS com um objeto JSON, sem markdown, sem texto antes ou depois, no 
                 />
               </div>
             )}
+          </div>
+
+          <div className="flex items-center gap-4 mb-5">
+            {["instagram", "facebook"].map((p) => (
+              <label key={p} className="flex items-center gap-2 text-sm cursor-pointer" style={{ color: "#4A1E2A" }}>
+                <input
+                  type="checkbox"
+                  checked={platform[p]}
+                  onChange={() => setPlatform((pl) => ({ ...pl, [p]: !pl[p] }))}
+                />
+                {p === "instagram" ? "Instagram" : "Facebook"}
+              </label>
+            ))}
+          </div>
+
+          <div className="flex gap-2">
+            <button
+              onClick={() => saveToLibrary("pronto")}
+              className="px-4 py-2.5 rounded-lg text-sm font-medium flex items-center gap-2"
+              style={{ background: "#8B3A4B", color: "#FBF4EC" }}
+            >
+              <Check size={15} /> Guardar como pronto a publicar
+            </button>
+            <button
+              onClick={() => saveToLibrary("rascunho")}
+              className="px-4 py-2.5 rounded-lg text-sm"
+              style={{ background: "#FBF4EC", color: "#8C7A6E", border: "1px solid #E6D6C7" }}
+            >
+              Guardar como rascunho
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ---------------------------------------------------------
+   CRIAR CONTEÚDO A PARTIR DE UMA FOTO
+--------------------------------------------------------- */
+function PhotoContentGenerator({ user, onSaved }) {
+  const [photo, setPhoto] = useState(null); // { url, name }
+  const [topic, setTopic] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [result, setResult] = useState(null);
+  const [error, setError] = useState("");
+  const [platform, setPlatform] = useState({ instagram: true, facebook: true });
+
+  async function generate() {
+    if (!photo) return;
+    setLoading(true);
+    setError("");
+    setResult(null);
+    try {
+      const res = await apiGenerateFromPhoto(photo.url, topic);
+      if (!res.ok) throw new Error(res.error || "Erro desconhecido");
+      setResult(res);
+    } catch (err) {
+      setError("Não consegui gerar o texto agora. Detalhe técnico: " + (err?.message || String(err)));
+    }
+    setLoading(false);
+  }
+
+  async function saveToLibrary(status) {
+    if (!result) return;
+    const post = {
+      id: "post_" + Date.now(),
+      category: "foto",
+      status,
+      author: user?.name || "Equipa",
+      createdAt: new Date().toISOString(),
+      platform,
+      mediaNames: photo ? [photo.name || "foto"] : [],
+      ...result,
+    };
+    try {
+      await apiSavePost(post);
+    } catch (err) {
+      setError("Não consegui guardar na biblioteca partilhada. Tenta novamente.");
+      return;
+    }
+    onSaved?.(post);
+    setPhoto(null);
+    setTopic("");
+    setResult(null);
+  }
+
+  return (
+    <div>
+      <h2 style={{ fontFamily: "Fraunces, serif", color: "#4A1E2A" }} className="text-xl mb-1">
+        Criar conteúdo a partir de uma foto
+      </h2>
+      <p style={{ color: "#8C7A6E" }} className="text-sm mb-6">
+        Escolhe a fotografia, escreve os tópicos que queres realçar e a IA escreve o texto mais adequado à imagem.
+      </p>
+
+      <div className="rounded-xl p-5 mb-4" style={{ background: "#fff", border: "1px solid #E6D6C7" }}>
+        <label style={{ color: "#8C7A6E" }} className="text-xs block mb-2">1. Fotografia</label>
+
+        {photo && (
+          <div className="flex items-center gap-3 mb-3">
+            <img src={photo.url} alt="" className="w-20 h-20 rounded-lg object-cover" style={{ border: "1px solid #E6D6C7" }} />
+            <button
+              onClick={() => { setPhoto(null); setResult(null); }}
+              className="text-xs font-medium"
+              style={{ color: "#8B3A4B" }}
+            >
+              Trocar foto
+            </button>
+          </div>
+        )}
+
+        {!photo && (
+          <div className="mb-1">
+            <div className="mb-3">
+              <label
+                className="inline-flex items-center gap-2 text-sm font-medium px-3 py-2 rounded-lg cursor-pointer"
+                style={{ background: "#F3E3D3", color: "#6B2A3D" }}
+              >
+                <Camera size={15} /> Carregar do telemóvel
+                <input
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={(e) => {
+                    const f = e.target.files?.[0];
+                    if (!f) return;
+                    const reader = new FileReader();
+                    reader.onload = () => setPhoto({ url: reader.result, name: f.name });
+                    reader.readAsDataURL(f);
+                  }}
+                />
+              </label>
+            </div>
+            <div className="p-3 rounded-lg" style={{ background: "#FBF4EC", border: "1px solid #E6D6C7" }}>
+              <div style={{ color: "#8C7A6E" }} className="text-xs mb-2">Ou escolhe da biblioteca / stock</div>
+              <ImageLibrary onSelect={(img) => setPhoto(img)} />
+            </div>
+          </div>
+        )}
+      </div>
+
+      {photo && (
+        <div className="rounded-xl p-5 mb-4" style={{ background: "#fff", border: "1px solid #E6D6C7" }}>
+          <label style={{ color: "#8C7A6E" }} className="text-xs block mb-2">
+            2. Tópicos a realçar (opcional — ex: nome da marca, promoção, ocasião)
+          </label>
+          <textarea
+            value={topic}
+            onChange={(e) => setTopic(e.target.value)}
+            rows={3}
+            className="w-full p-3 rounded-lg text-sm outline-none resize-none"
+            style={{ background: "#FBF4EC", border: "1px solid #E6D6C7", color: "#4A1E2A" }}
+            placeholder="Ex: nova coleção de sol, 2ª par a metade do preço, para regresso às aulas..."
+          />
+          <button
+            onClick={generate}
+            disabled={loading}
+            className="mt-3 px-4 py-2.5 rounded-lg text-sm font-medium flex items-center gap-2"
+            style={{ background: "#4A1E2A", color: "#FBF4EC", opacity: loading ? 0.7 : 1 }}
+          >
+            {loading ? <Loader2 size={15} className="animate-spin" /> : <Sparkles size={15} />}
+            {loading ? "A analisar a foto..." : "Gerar texto para esta foto"}
+          </button>
+          {error && (
+            <div className="flex items-center gap-2 text-sm mt-3" style={{ color: "#C24444" }}>
+              <AlertCircle size={14} /> {error}
+            </div>
+          )}
+        </div>
+      )}
+
+      {result && (
+        <div className="rounded-xl p-5 mb-4" style={{ background: "#fff", border: "1px solid #E6D6C7" }}>
+          <div className="flex items-center justify-between mb-4">
+            <span style={{ color: "#B0A196" }} className="text-xs uppercase tracking-wide">
+              {result.titulo_interno}
+            </span>
+            <button
+              onClick={generate}
+              className="text-xs flex items-center gap-1"
+              style={{ color: "#8B3A4B" }}
+            >
+              <RefreshCw size={12} /> Gerar outra versão
+            </button>
+          </div>
+
+          <div className="mb-4">
+            <div style={{ color: "#8C7A6E" }} className="text-xs mb-1.5">Legenda</div>
+            <div
+              className="p-3 rounded-lg text-sm whitespace-pre-wrap"
+              style={{ background: "#FBF4EC", color: "#4A1E2A", lineHeight: 1.6 }}
+            >
+              {result.legenda}
+            </div>
+          </div>
+
+          <div className="mb-4">
+            <div style={{ color: "#8C7A6E" }} className="text-xs mb-1.5">Hashtags</div>
+            <div className="flex flex-wrap gap-1.5">
+              {(result.hashtags || []).map((h, i) => (
+                <span
+                  key={i}
+                  className="text-xs px-2 py-1 rounded-full"
+                  style={{ background: "#F3E3D3", color: "#6B2A3D" }}
+                >
+                  {h}
+                </span>
+              ))}
+            </div>
+          </div>
+
+          {result.sugestao_visual && (
+            <div className="mb-4">
+              <div style={{ color: "#8C7A6E" }} className="text-xs mb-1.5">Nota sobre a foto</div>
+              <div className="text-sm" style={{ color: "#4A1E2A" }}>{result.sugestao_visual}</div>
+            </div>
+          )}
+
+          <div className="mb-5">
+            <div style={{ color: "#8C7A6E" }} className="text-xs mb-1.5">Chamada à ação</div>
+            <div className="text-sm font-medium" style={{ color: "#6B2A3D" }}>{result.cta}</div>
           </div>
 
           <div className="flex items-center gap-4 mb-5">
@@ -2124,6 +2354,7 @@ export default function OpticApp() {
           {[
             { id: "dashboard", label: "Início", icon: Eye },
             { id: "gerar", label: "Gerar conteúdo", icon: Sparkles },
+            { id: "criar-foto", label: "Criar conteúdo", icon: Camera },
             { id: "video", label: "Vídeo", icon: Video },
             { id: "carrossel", label: "Carrossel", icon: LayoutGrid },
             { id: "imagens", label: "Imagens", icon: ImageIcon },
@@ -2169,6 +2400,9 @@ export default function OpticApp() {
             />
           )}
           {tab === "video" && <VideoGenerator />}
+          {tab === "criar-foto" && (
+            <PhotoContentGenerator user={user} onSaved={() => { setTab("dashboard"); setRefreshKey((k) => k + 1); }} />
+          )}
           {tab === "carrossel" && <CarouselGenerator user={user} resumeData={resumeCarousel} />}
           {tab === "biblioteca" && (
             <Library
