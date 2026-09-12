@@ -70,11 +70,11 @@ async function apiLogin(email, password) {
   });
   return res.json();
 }
-async function apiSignup(name, email, password) {
+async function apiSignup(name, email, password, inviteCode) {
   const res = await fetch("/.netlify/functions/accounts", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ action: "signup", name, email, password }),
+    body: JSON.stringify({ action: "signup", name, email, password, inviteCode }),
   });
   return res.json();
 }
@@ -240,6 +240,7 @@ function LoginScreen({ onLogin }) {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [inviteCode, setInviteCode] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [focused, setFocused] = useState(false);
@@ -252,7 +253,7 @@ function LoginScreen({ onLogin }) {
   async function handleSubmit(e) {
     e.preventDefault();
     setError("");
-    if (!email || !password || (mode === "criar" && !name)) {
+    if (!email || !password || (mode === "criar" && (!name || !inviteCode))) {
       setError("Preenche todos os campos.");
       return;
     }
@@ -261,7 +262,7 @@ function LoginScreen({ onLogin }) {
     try {
       const result = mode === "entrar"
         ? await apiLogin(email, password)
-        : await apiSignup(name, email, password);
+        : await apiSignup(name, email, password, inviteCode);
 
       if (!result.ok) {
         setError(result.error || "Algo correu mal. Tenta novamente.");
@@ -361,8 +362,7 @@ function LoginScreen({ onLogin }) {
                   style={{ background: "#fff", border: "1px solid #E6D6C7", color: "#4A1E2A" }}
                 />
               </div>
-            )}
-            <div className="relative">
+            )}            <div className="relative">
               <Mail size={16} className="absolute left-3 top-3.5" color="#B0A196" />
               <input
                 type="email"
@@ -384,6 +384,18 @@ function LoginScreen({ onLogin }) {
                 style={{ background: "#fff", border: "1px solid #E6D6C7", color: "#4A1E2A" }}
               />
             </div>
+            {mode === "criar" && (
+              <div className="relative">
+                <Lock size={16} className="absolute left-3 top-3.5" color="#B0A196" />
+                <input
+                  value={inviteCode}
+                  onChange={(e) => setInviteCode(e.target.value)}
+                  placeholder="Código de convite da equipa"
+                  className="w-full pl-9 pr-3 py-3 rounded-lg text-sm outline-none"
+                  style={{ background: "#fff", border: "1px solid #E6D6C7", color: "#4A1E2A" }}
+                />
+              </div>
+            )}
 
             {error && (
               <div className="flex items-start gap-2 text-sm" style={{ color: "#C24444" }}>
@@ -1567,6 +1579,7 @@ function VideoGenerator({ onSaved }) {
 function SettingsPanel() {
   const [settings, setSettings] = useState([]);
   const [heygenKey, setHeygenKey] = useState("");
+  const [inviteCodeInput, setInviteCodeInput] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -1587,9 +1600,10 @@ function SettingsPanel() {
   }
 
   const heygenEntry = settings.find((s) => s.key === "heygenApiKey");
+  const inviteEntry = settings.find((s) => s.key === "inviteCode");
 
-  async function save() {
-    if (!heygenKey.trim()) return;
+  async function saveKey(key, value, onDone) {
+    if (!value.trim()) return;
     setSaving(true);
     setError("");
     setSuccess("");
@@ -1597,16 +1611,16 @@ function SettingsPanel() {
       const res = await fetch("/.netlify/functions/settings", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ key: "heygenApiKey", value: heygenKey.trim() }),
+        body: JSON.stringify({ key, value: value.trim() }),
       });
       const data = await res.json();
       if (!data.ok) {
-        setError(data.error || "Não consegui guardar a chave.");
+        setError(data.error || "Não consegui guardar.");
         setSaving(false);
         return;
       }
-      setHeygenKey("");
-      setSuccess("Chave guardada com sucesso.");
+      onDone?.();
+      setSuccess("Guardado com sucesso.");
       await load();
     } catch (err) {
       setError("Erro ao guardar: " + (err?.message || String(err)));
@@ -1614,13 +1628,13 @@ function SettingsPanel() {
     setSaving(false);
   }
 
-  async function remove() {
+  async function removeKey(key) {
     setSaving(true);
     setError("");
     setSuccess("");
     try {
-      await fetch("/.netlify/functions/settings?key=heygenApiKey", { method: "DELETE" });
-      setSuccess("Chave removida.");
+      await fetch(`/.netlify/functions/settings?key=${key}`, { method: "DELETE" });
+      setSuccess("Removido.");
       await load();
     } catch (err) {
       setError("Erro ao remover: " + (err?.message || String(err)));
@@ -1634,8 +1648,45 @@ function SettingsPanel() {
         Definições
       </h2>
       <p style={{ color: "#8C7A6E" }} className="text-sm mb-6">
-        Chaves de API usadas pela aplicação. Ficam guardadas em segurança no servidor.
+        Chaves e configurações usadas pela aplicação. Ficam guardadas em segurança no servidor.
       </p>
+
+      <div className="rounded-xl p-5 mb-4" style={{ background: "#fff", border: "1px solid #E6D6C7" }}>
+        <div className="flex items-center justify-between mb-2">
+          <label style={{ color: "#4A1E2A" }} className="text-sm font-medium">Código de convite da equipa</label>
+          {!loading && inviteEntry?.hasValue && (
+            <span className="text-xs font-mono px-2 py-0.5 rounded-full" style={{ background: "#F3E3D3", color: "#6B2A3D" }}>
+              {inviteEntry.value}
+            </span>
+          )}
+        </div>
+        <p style={{ color: "#8C7A6E" }} className="text-xs mb-3">
+          Quem se quiser registar na app precisa deste código. Partilha-o só com pessoas de confiança, junto com o link da app.
+          {!loading && !inviteEntry?.hasValue && " Enquanto não configurares um código aqui, ninguém consegue criar conta nova."}
+        </p>
+        <div className="flex flex-col sm:flex-row gap-2">
+          <input
+            value={inviteCodeInput}
+            onChange={(e) => setInviteCodeInput(e.target.value)}
+            placeholder={inviteEntry?.hasValue ? "Novo código (para substituir)" : "Ex: OPTICALIA2026"}
+            className="flex-1 p-2.5 rounded-lg text-sm outline-none"
+            style={{ background: "#FBF4EC", border: "1px solid #E6D6C7", color: "#4A1E2A" }}
+          />
+          <button
+            onClick={() => saveKey("inviteCode", inviteCodeInput, () => setInviteCodeInput(""))}
+            disabled={saving || !inviteCodeInput.trim()}
+            className="px-4 py-2 rounded-lg text-sm font-medium shrink-0"
+            style={{ background: "#8B3A4B", color: "#FBF4EC", opacity: saving ? 0.7 : 1 }}
+          >
+            Guardar
+          </button>
+        </div>
+        {!loading && inviteEntry?.hasValue && (
+          <button onClick={() => removeKey("inviteCode")} disabled={saving} className="text-xs mt-3" style={{ color: "#C24444" }}>
+            Remover código (fecha o registo a novas pessoas)
+          </button>
+        )}
+      </div>
 
       <div className="rounded-xl p-5 mb-4" style={{ background: "#fff", border: "1px solid #E6D6C7" }}>
         <div className="flex items-center justify-between mb-2">
@@ -1659,7 +1710,7 @@ function SettingsPanel() {
             style={{ background: "#FBF4EC", border: "1px solid #E6D6C7", color: "#4A1E2A" }}
           />
           <button
-            onClick={save}
+            onClick={() => saveKey("heygenApiKey", heygenKey, () => setHeygenKey(""))}
             disabled={saving || !heygenKey.trim()}
             className="px-4 py-2 rounded-lg text-sm font-medium shrink-0"
             style={{ background: "#8B3A4B", color: "#FBF4EC", opacity: saving ? 0.7 : 1 }}
@@ -1668,7 +1719,7 @@ function SettingsPanel() {
           </button>
         </div>
         {!loading && heygenEntry?.hasValue && (
-          <button onClick={remove} disabled={saving} className="text-xs mt-3" style={{ color: "#C24444" }}>
+          <button onClick={() => removeKey("heygenApiKey")} disabled={saving} className="text-xs mt-3" style={{ color: "#C24444" }}>
             Remover chave
           </button>
         )}
