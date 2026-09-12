@@ -12,7 +12,7 @@ export default async (req) => {
     return new Response(JSON.stringify({ ok: false, error: "Pedido inválido" }), { status: 400 });
   }
 
-  const { action, email, password, name } = body || {};
+  const { action, email, password, name, inviteCode } = body || {};
   if (!email || !password || (action === "signup" && !name)) {
     return new Response(JSON.stringify({ ok: false, error: "Faltam dados" }), { status: 400 });
   }
@@ -37,6 +37,19 @@ export default async (req) => {
       if (existing) {
         return new Response(JSON.stringify({ ok: false, error: "Já existe uma conta com este email." }), { status: 409 });
       }
+
+      const settingsStore = getStore({ name: "optic-settings", consistency: "strong" });
+      const configuredCode = await settingsStore.get("inviteCode", { type: "text" });
+      if (!configuredCode) {
+        return new Response(
+          JSON.stringify({ ok: false, error: "O registo está temporariamente fechado. Pede à equipa para configurar um código de convite." }),
+          { status: 403 }
+        );
+      }
+      if (!inviteCode || inviteCode.trim().toLowerCase() !== configuredCode.trim().toLowerCase()) {
+        return new Response(JSON.stringify({ ok: false, error: "Código de convite inválido." }), { status: 403 });
+      }
+
       const user = { name, email: key, password };
       await store.setJSON(key, user);
       return new Response(JSON.stringify({ ok: true, user: { name, email: key } }), { status: 200 });
