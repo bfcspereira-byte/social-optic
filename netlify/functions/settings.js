@@ -23,7 +23,7 @@ export default async (req) => {
       const entries = await Promise.all(
         blobs.map(async (b) => {
           const value = await s.get(b.key, { type: "text" });
-          return { key: b.key, hasValue: !!value, masked: mask(value) };
+          return { key: b.key, value, hasValue: !!value, masked: mask(value) };
         })
       );
       return new Response(JSON.stringify({ ok: true, settings: entries }), { status: 200 });
