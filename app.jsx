@@ -455,19 +455,20 @@ function Generator({ user, onSaved, initialCategory, initialDetail }) {
   const fileRef = useRef(null);
 
   async function generate(refineFeedback) {
+    const fb = typeof refineFeedback === "string" && refineFeedback.trim() ? refineFeedback.trim() : null;
     setLoading(true);
     setError("");
-    if (!refineFeedback) setResult(null);
+    if (!fb) setResult(null);
     try {
       const prompt = `Es um especialista em marketing de redes sociais para óticas em Portugal. Escreves para a "Opticalia Felgueiras", uma ótica local, com tom próximo, claro e de confiança — sem exageros de vendedor.
 
 ${CATEGORY_PROMPTS[category]}
 ${detail ? `Detalhe pedido pelo lojista: ${detail}` : ""}
-${refineFeedback && result ? `
+${fb && result ? `
 Já tinhas escrito esta versão:
 ${JSON.stringify({ titulo_interno: result.titulo_interno, legenda: result.legenda, hashtags: result.hashtags, sugestao_visual: result.sugestao_visual, cta: result.cta })}
 
-O lojista pediu esta alteração: "${refineFeedback}"
+O lojista pediu esta alteração: "${fb}"
 Reescreve tendo em conta este pedido, mantendo o resto fiel ao briefing original.` : ""}
 
 Responde APENAS com um objeto JSON, sem markdown, sem texto antes ou depois, no formato:
@@ -778,11 +779,12 @@ function PhotoContentGenerator({ user, onSaved }) {
 
   async function generate(refineFeedback) {
     if (!photo) return;
+    const fb = typeof refineFeedback === "string" && refineFeedback.trim() ? refineFeedback.trim() : null;
     setLoading(true);
     setError("");
-    if (!refineFeedback) setResult(null);
+    if (!fb) setResult(null);
     try {
-      const res = await apiGenerateFromPhoto(photo.url, topic, refineFeedback, refineFeedback ? result : null);
+      const res = await apiGenerateFromPhoto(photo.url, topic, fb, fb ? result : null);
       if (!res.ok) throw new Error(res.error || "Erro desconhecido");
       setResult(res);
       setFeedback("");
@@ -886,7 +888,7 @@ function PhotoContentGenerator({ user, onSaved }) {
             placeholder="Ex: nova coleção de sol, 2ª par a metade do preço, para regresso às aulas..."
           />
           <button
-            onClick={generate}
+            onClick={() => generate()}
             disabled={loading}
             className="mt-3 px-4 py-2.5 rounded-lg text-sm font-medium flex items-center gap-2"
             style={{ background: "#4A1E2A", color: "#FBF4EC", opacity: loading ? 0.7 : 1 }}
